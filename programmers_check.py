@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -20,6 +21,10 @@ DISCORD_LIMIT = 2000
 STATE_PATH = Path(".state/seen_commits.json")
 SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
+
+# Lv.0~5가 올라갈수록 체감 난도가 크게 뛰어서 피보나치식 가중치를 둡니다.
+LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
+RANK_TAGS = {1: "OPUS", 2: "CODEX", 3: "개허접"}
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -48,6 +53,26 @@ class CommitInfo:
     sha: str
     message: str
     url: str
+    committed_at: datetime
+
+    @property
+    def kst_date(self) -> date:
+        return self.committed_at.astimezone(KST).date()
+
+
+@dataclass(frozen=True)
+class MemberStats:
+    friend: Friend
+    commits: tuple[CommitInfo, ...]
+    score: int
+    level_counts: dict[int, int]
+    total_commits: int
+    week_commits: int
+    month_commits: int
+    max_daily_commits: int
+    current_streak: int
+    longest_streak: int
+    last_solved_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -57,59 +82,27 @@ class SummaryResult:
     error: str | None = None
 
 
-def is_solution_commit(commit: CommitInfo) -> bool:
-    return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
-
-
-def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
-    return [commit for commit in commits if is_solution_commit(commit)]
-
-
-def problem_title(commit: CommitInfo) -> str:
-    message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
-    match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
-    if match:
-        return match.group(1).strip()
-    return message or "풀이 커밋"
-
-
-def problem_level(commit: CommitInfo) -> str:
-    match = re.search(r"\[level\s*(\d+)\]", commit.message, flags=re.IGNORECASE)
-    if match:
-        level = match.group(1)
-        return f"Lv. {level * 6}"
-    return "Lv. ??????"
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Programmers 풀이 저장소의 GitHub 커밋을 확인하고 Discord로 알립니다."
-    )
+    parser = argparse.ArgumentParser(description="Programmers 풀이 GitHub 커밋을 확인하고 Discord로 알립니다.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     poll_parser = subparsers.add_parser("poll", help="새 풀이 커밋을 확인하고 즉시 알림을 보냅니다.")
-    poll_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Discord 전송과 상태 저장 없이 결과만 출력합니다.",
-    )
+    poll_parser.add_argument("--dry-run", action="store_true", help="Discord 전송과 상태 저장 없이 결과만 출력합니다.")
 
     summary_parser = subparsers.add_parser("summary", help="KST 날짜별 풀이 기록 요약을 보냅니다.")
-    summary_parser.add_argument(
-        "--date",
-        type=parse_kst_date,
-        help="요약할 KST 날짜입니다. 형식: YYYY-MM-DD",
-    )
-    summary_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Discord로 보내지 않고 결과를 stdout에만 출력합니다.",
-    )
-    summary_parser.add_argument(
-        "--once",
-        action="store_true",
-        help="해당 날짜 요약을 이미 보냈으면 다시 보내지 않습니다.",
-    )
+    summary_parser.add_argument("--date", type=parse_kst_date, help="요약할 KST 날짜입니다. 형식: YYYY-MM-DD")
+    summary_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
+    summary_parser.add_argument("--once", action="store_true", help="해당 날짜 요약을 이미 보냈다면 다시 보내지 않습니다.")
+
+    weekly_parser = subparsers.add_parser("weekly", help="이번 주 COMMIT 랭킹을 보냅니다.")
+    weekly_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
+
+    ranking_parser = subparsers.add_parser("ranking", help="난이도 점수 기반 종합 랭킹을 보냅니다.")
+    ranking_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
+
+    stats_parser = subparsers.add_parser("stats", help="개인 스탯을 보냅니다.")
+    stats_parser.add_argument("name", help="멤버 이름")
+    stats_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
 
     return parser.parse_args()
 
@@ -118,9 +111,7 @@ def parse_kst_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"날짜 값이 올바르지 않습니다: {value!r}. YYYY-MM-DD 형식을 사용하세요."
-        ) from exc
+        raise argparse.ArgumentTypeError(f"날짜 값이 올바르지 않습니다: {value!r}. YYYY-MM-DD 형식을 사용하세요.") from exc
 
 
 def load_friends() -> list[Friend]:
@@ -143,22 +134,13 @@ def load_friends() -> list[Friend]:
 
         missing = [key for key in ("name", "owner", "repo") if not item.get(key)]
         if missing:
-            raise ConfigError(
-                f"FRIENDS_JSON의 {index}번째 항목에 필수 값이 없습니다: {', '.join(missing)}"
-            )
+            raise ConfigError(f"FRIENDS_JSON의 {index}번째 항목에 필수 값이 없습니다: {', '.join(missing)}")
 
         branch = item.get("branch")
         if branch is not None and not isinstance(branch, str):
             raise ConfigError(f"FRIENDS_JSON의 {index}번째 branch 값은 문자열이어야 합니다.")
 
-        friends.append(
-            Friend(
-                name=str(item["name"]),
-                owner=str(item["owner"]),
-                repo=str(item["repo"]),
-                branch=branch,
-            )
-        )
+        friends.append(Friend(name=str(item["name"]), owner=str(item["owner"]), repo=str(item["repo"]), branch=branch))
 
     if not friends:
         raise ConfigError("FRIENDS_JSON에 멤버 정보가 없습니다.")
@@ -172,8 +154,20 @@ def get_kst_date_range(target_date: date) -> tuple[str, str]:
     return to_utc_iso(start_kst), to_utc_iso(end_kst)
 
 
+def get_kst_week_range(target_date: date | None = None) -> tuple[date, date]:
+    target_date = target_date or datetime.now(KST).date()
+    start = target_date - timedelta(days=target_date.weekday())
+    return start, target_date
+
+
 def to_utc_iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def parse_github_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def github_session() -> requests.Session:
@@ -221,13 +215,24 @@ def fetch_commits(
                 continue
             commit = item.get("commit", {})
             message = ""
+            committed_at = datetime.now(timezone.utc)
             if isinstance(commit, dict):
                 message = str(commit.get("message", "")).splitlines()[0].strip()
+                date_value = None
+                committer = commit.get("committer", {})
+                author = commit.get("author", {})
+                if isinstance(committer, dict):
+                    date_value = committer.get("date")
+                if not date_value and isinstance(author, dict):
+                    date_value = author.get("date")
+                committed_at = parse_github_datetime(str(date_value) if date_value else None)
+
             commits.append(
                 CommitInfo(
                     sha=str(item.get("sha", "")),
                     message=message or "(커밋 메시지 없음)",
                     url=str(item.get("html_url", "")),
+                    committed_at=committed_at,
                 )
             )
 
@@ -251,6 +256,49 @@ def format_github_error(response: requests.Response, friend: Friend) -> str:
     return f"{friend.repo_key} GitHub API 요청 실패: HTTP {response.status_code} ({message})"
 
 
+def is_solution_commit(commit: CommitInfo) -> bool:
+    return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
+
+
+def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
+    return [commit for commit in commits if is_solution_commit(commit)]
+
+
+def problem_title(commit: CommitInfo) -> str:
+    message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
+    match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
+    if match:
+        return match.group(1).strip()
+    return message or "풀이 커밋"
+
+
+def problem_level_number(commit: CommitInfo) -> int | None:
+    match = re.search(r"\[level\s*(\d+)\]", commit.message, flags=re.IGNORECASE)
+    if not match:
+        return None
+    level = int(match.group(1))
+    return level if level in LEVEL_POINTS else None
+
+
+def problem_level(commit: CommitInfo) -> str:
+    level = problem_level_number(commit)
+    if level is None:
+        return "Lv. ??????"
+    return f"Lv. {str(level) * 6}"
+
+
+def commit_points(commit: CommitInfo) -> int:
+    level = problem_level_number(commit)
+    if level is None:
+        return 1
+    return LEVEL_POINTS[level]
+
+
+def rank_tag(rank: int) -> str:
+    tag = RANK_TAGS.get(rank)
+    return f"[{tag}]" if tag else ""
+
+
 def load_state() -> tuple[dict[str, list[str]], bool]:
     if not STATE_PATH.exists():
         return {}, False
@@ -272,10 +320,7 @@ def load_state() -> tuple[dict[str, list[str]], bool]:
 
 def save_state(state: dict[str, list[str]]) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def load_summary_state() -> set[str]:
@@ -294,10 +339,7 @@ def load_summary_state() -> set[str]:
 
 def save_summary_state(sent_dates: set[str]) -> None:
     SUMMARY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SUMMARY_STATE_PATH.write_text(
-        json.dumps(sorted(sent_dates), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    SUMMARY_STATE_PATH.write_text(json.dumps(sorted(sent_dates), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def send_discord_message(content: str, dry_run: bool = False) -> None:
@@ -324,21 +366,163 @@ def truncate_discord_content(content: str) -> str:
 
 
 def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: int) -> str:
-    title = problem_title(commit)
-    level = problem_level(commit)
-    lines = [
-        f"**✅ {friend.name} 1 COMMIT!**",
-        "------------------------",
-        f"난이도: {level}",
-        f"문제: {title}",
-        f"총 누적: {total_count} COMMIT",
-        "------------------------",
-    ]
+    return "\n".join(
+        [
+            f"**✅ {friend.name} 1 COMMIT!**",
+            "------------------------",
+            f"난이도: {problem_level(commit)}",
+            f"문제: {problem_title(commit)}",
+            f"총 누적: {total_count} COMMIT",
+            "------------------------",
+        ]
+    )
+
+
+def build_stats(session: requests.Session, friends: list[Friend], today: date | None = None) -> list[MemberStats]:
+    today = today or datetime.now(KST).date()
+    week_start, week_end = get_kst_week_range(today)
+    month_start = today.replace(day=1)
+    stats: list[MemberStats] = []
+
+    for friend in friends:
+        commits = tuple(solution_commits(fetch_commits(session, friend)))
+        level_counts: Counter[int] = Counter()
+        daily_counts: Counter[date] = Counter()
+        score = 0
+
+        for commit in commits:
+            level = problem_level_number(commit)
+            if level is not None:
+                level_counts[level] += 1
+            score += commit_points(commit)
+            daily_counts[commit.kst_date] += 1
+
+        solved_dates = set(daily_counts)
+        last_solved_at = max((commit.committed_at for commit in commits), default=None)
+        stats.append(
+            MemberStats(
+                friend=friend,
+                commits=commits,
+                score=score,
+                level_counts={level: level_counts.get(level, 0) for level in range(6)},
+                total_commits=len(commits),
+                week_commits=sum(1 for commit in commits if week_start <= commit.kst_date <= week_end),
+                month_commits=sum(1 for commit in commits if month_start <= commit.kst_date <= today),
+                max_daily_commits=max(daily_counts.values(), default=0),
+                current_streak=calculate_current_streak(solved_dates, today),
+                longest_streak=calculate_longest_streak(solved_dates),
+                last_solved_at=last_solved_at,
+            )
+        )
+
+    return stats
+
+
+def calculate_current_streak(solved_dates: set[date], today: date) -> int:
+    streak = 0
+    cursor = today
+    while cursor in solved_dates:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def calculate_longest_streak(solved_dates: set[date]) -> int:
+    if not solved_dates:
+        return 0
+
+    longest = 0
+    current = 0
+    previous: date | None = None
+    for solved_date in sorted(solved_dates):
+        if previous is None or solved_date == previous + timedelta(days=1):
+            current += 1
+        else:
+            current = 1
+        longest = max(longest, current)
+        previous = solved_date
+    return longest
+
+
+def sorted_weekly(stats: list[MemberStats]) -> list[MemberStats]:
+    return sorted(stats, key=lambda item: (-item.week_commits, item.friend.name))
+
+
+def sorted_ranking(stats: list[MemberStats]) -> list[MemberStats]:
+    return sorted(stats, key=lambda item: (-item.score, -item.total_commits, item.friend.name))
+
+
+def rank_lookup(stats: list[MemberStats]) -> dict[str, int]:
+    return {item.friend.name: rank for rank, item in enumerate(sorted_ranking(stats), start=1)}
+
+
+def build_weekly_ranking_message(stats: list[MemberStats], target_date: date | None = None) -> str:
+    week_start, week_end = get_kst_week_range(target_date)
+    lines = [f"**🏁 금주의 랭킹 ({week_start} ~ {week_end})**"]
+    for rank, item in enumerate(sorted_weekly(stats), start=1):
+        lines.append(f"{rank}등 {item.friend.name}: {item.week_commits} COMMIT")
     return "\n".join(lines)
 
 
-def fetch_total_solution_count(session: requests.Session, friend: Friend) -> int:
-    return len(solution_commits(fetch_commits(session, friend)))
+def build_overall_ranking_message(stats: list[MemberStats]) -> str:
+    lines = ["**🏆 종합 랭킹**"]
+    for rank, item in enumerate(sorted_ranking(stats), start=1):
+        lines.append(f"{rank}등 {item.friend.name}{rank_tag(rank)}: {item.score}점 / {item.total_commits} COMMIT")
+    return "\n".join(lines)
+
+
+def build_member_stats_message(stats: list[MemberStats], name: str) -> str:
+    ranks = rank_lookup(stats)
+    target = next((item for item in stats if item.friend.name == name), None)
+    if target is None:
+        known_names = ", ".join(item.friend.name for item in stats)
+        return f"찾을 수 없는 이름입니다: {name}\n가능한 이름: {known_names}"
+
+    rank = ranks[target.friend.name]
+    last_solved = "-"
+    if target.last_solved_at:
+        last_solved = target.last_solved_at.astimezone(KST).strftime("%Y-%m-%d %H:%M")
+
+    lines = [
+        f"**📊 {target.friend.name} 스탯**",
+        f"종합 순위: {rank}등 {rank_tag(rank)}",
+        f"현재 점수: {target.score}점",
+        f"총 누적: {target.total_commits} COMMIT",
+        f"이번 주: {target.week_commits} COMMIT",
+        f"이번 달: {target.month_commits} COMMIT",
+        f"하루 최대: {target.max_daily_commits} COMMIT",
+        f"현재 연속: {target.current_streak}일",
+        f"최장 연속: {target.longest_streak}일",
+        f"마지막 풀이: {last_solved}",
+        "",
+        "난이도 분포",
+    ]
+    for level in range(6):
+        lines.append(f"Lv.{level}: {target.level_counts.get(level, 0)}문제")
+    return "\n".join(lines)
+
+
+def build_summary_message(target_date: date, results: list[SummaryResult], stats: list[MemberStats] | None = None) -> str:
+    total = sum(result.count for result in results if result.error is None)
+    solved = sum(1 for result in results if result.error is None and result.count > 0)
+    lines = [
+        f"**📌 {target_date.isoformat()} 프로그래머스 기록**",
+        f"완료 {solved}/{len(results)}명 · 총 {total}문제",
+        "",
+    ]
+
+    for result in results:
+        if result.error:
+            lines.append(f"⚠️ {result.friend.name}: 확인 실패")
+        elif result.count > 0:
+            lines.append(f"✅ {result.friend.name}: {result.count} COMMIT")
+        else:
+            lines.append(f"❌ {result.friend.name}: 0 COMMIT")
+
+    if stats:
+        lines.extend(["", build_weekly_ranking_message(stats, target_date), "", build_overall_ranking_message(stats)])
+
+    return "\n".join(lines)
 
 
 def run_poll(dry_run: bool = False) -> int:
@@ -369,7 +553,7 @@ def run_poll(dry_run: bool = False) -> int:
         new_commits = [commit for commit in reversed(commits) if commit.sha and commit.sha not in seen]
         if new_commits:
             try:
-                total_count = fetch_total_solution_count(session, friend)
+                total_count = len(solution_commits(fetch_commits(session, friend)))
             except Exception as exc:
                 print(f"{friend.name} 총 누적 확인 실패: {exc}", file=sys.stderr)
                 total_count = len(set(state.get(repo_key, []) + current_shas))
@@ -413,7 +597,6 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
             return 0
 
     since_utc, until_utc = get_kst_date_range(target_date)
-
     results: list[SummaryResult] = []
     for friend in friends:
         try:
@@ -423,27 +606,39 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             results.append(SummaryResult(friend=friend, error=str(exc)))
 
-    total = sum(result.count for result in results if result.error is None)
-    solved = sum(1 for result in results if result.error is None and result.count > 0)
-    lines = [
-        f"**📌 {target_date.isoformat()} 프로그래머스 기록**",
-        f"완료 {solved}/{len(results)}명 · 총 {total}문제",
-        "",
-    ]
+    stats: list[MemberStats] | None = None
+    try:
+        stats = build_stats(session, friends, today=target_date)
+    except Exception as exc:
+        print(f"랭킹 계산 실패: {exc}", file=sys.stderr)
 
-    for result in results:
-        if result.error:
-            lines.append(f"⚠️ {result.friend.name}: 확인 실패")
-        elif result.count > 0:
-            lines.append(f"✅ {result.friend.name}: {result.count} COMMIT")
-        else:
-            lines.append(f"❌ {result.friend.name}: 0 COMMIT")
-
-    send_discord_message("\n".join(lines), dry_run=dry_run)
+    send_discord_message(build_summary_message(target_date, results, stats), dry_run=dry_run)
     if once and not dry_run:
         sent_dates = load_summary_state()
         sent_dates.add(target_date_key)
         save_summary_state(sent_dates)
+    return 0
+
+
+def run_weekly(dry_run: bool = False) -> int:
+    target_date = datetime.now(KST).date()
+    session = github_session()
+    stats = build_stats(session, load_friends(), today=target_date)
+    send_discord_message(build_weekly_ranking_message(stats, target_date), dry_run=dry_run)
+    return 0
+
+
+def run_ranking(dry_run: bool = False) -> int:
+    session = github_session()
+    stats = build_stats(session, load_friends())
+    send_discord_message(build_overall_ranking_message(stats), dry_run=dry_run)
+    return 0
+
+
+def run_stats(name: str, dry_run: bool = False) -> int:
+    session = github_session()
+    stats = build_stats(session, load_friends())
+    send_discord_message(build_member_stats_message(stats, name), dry_run=dry_run)
     return 0
 
 
@@ -455,6 +650,12 @@ def main() -> int:
             return run_poll(dry_run=args.dry_run)
         if args.command == "summary":
             return run_summary(target_date=args.date, dry_run=args.dry_run, once=args.once)
+        if args.command == "weekly":
+            return run_weekly(dry_run=args.dry_run)
+        if args.command == "ranking":
+            return run_ranking(dry_run=args.dry_run)
+        if args.command == "stats":
+            return run_stats(name=args.name, dry_run=args.dry_run)
     except ConfigError as exc:
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2

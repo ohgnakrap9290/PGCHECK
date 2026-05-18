@@ -1,55 +1,115 @@
 # PGCHECK
 
-BaekjoonHub가 자동으로 커밋하는 Programmers 풀이 저장소를 확인해서 Discord로 알림을 보내는 자동화 프로젝트입니다.
+BaekjoonHub가 자동 커밋한 Programmers 풀이 기록을 확인해서 Discord로 알려주는 자동화 프로젝트입니다.
 
-현재 멤버:
+현재 멤버는 박강호, 이정찬, 허윤혁입니다.
 
-- 박강호: `ohgnakrap9290/programmers-study`
-- 이정찬: `jungchan06/programmers-study`
-- 허윤혁: `flains/programmers-study`
+## 기능
 
-## 동작 방식
+### 1. 즉시 풀이 알림
 
-즉시 알림은 GitHub Actions에서 5분마다 실행됩니다. 각 멤버의 오늘 KST 기준 BaekjoonHub 풀이 커밋을 확인하고, 이전 실행 이후 새 풀이 커밋이 있으면 커밋 1개당 Discord 메시지 1개를 보냅니다.
-
-즉시 알림 메시지 예시:
+GitHub Actions가 5분마다 각 멤버의 `programmers-study` 저장소를 확인합니다. 새 BaekjoonHub 풀이 커밋이 있으면 커밋 1개당 Discord 메시지 1개를 보냅니다.
 
 ```text
 **✅ 박강호 1 COMMIT!**
 ------------------------
 난이도: Lv. 000000
-문제: 문자열로 변환
-총 누적: 12 COMMIT
+문제: 수 조작하기 1
+총 누적: 6 COMMIT
 ------------------------
 ```
 
-`총 누적`은 오늘 누적이 아니라 해당 저장소의 전체 BaekjoonHub 풀이 커밋 누적 수입니다.
-난이도는 숫자를 6번 반복해서 표시합니다. 예를 들어 0단계는 `000000`, 1단계는 `111111`입니다.
+`총 누적`은 오늘 누적이 아니라 해당 저장소의 전체 BaekjoonHub 풀이 커밋 수입니다. 난이도는 Programmers 커밋 메시지의 `[level 0]` 값을 읽고, `0`이면 `000000`, `1`이면 `111111`처럼 표시합니다.
 
-야간 요약은 매일 00:00 KST에 실행됩니다. 예약 실행은 직전 KST 날짜의 풀이 수를 멤버별로 집계하고, 이름 기준 가나다순으로 정렬해서 보냅니다.
+### 2. 밤 12시 요약
 
-야간 요약 예시:
+매일 00:00 KST에 전날 KST 날짜를 요약합니다. GitHub Actions cron은 UTC 기준이라 workflow는 `0 15 * * *`에 실행됩니다.
 
 ```text
 **📌 2026-05-18 프로그래머스 기록**
 완료 2/3명 · 총 6문제
 
-✅ 박강호: 5 COMMIT
-✅ 이정찬: 1 COMMIT
-❌ 허윤혁: 0 COMMIT
+✅ 박강호: 3 COMMIT
+❌ 이정찬: 0 COMMIT
+✅ 허윤혁: 2 COMMIT
 ```
 
-`Initial commit`, README 수정, 일반 커밋은 제외하고 `BaekjoonHub`가 들어간 풀이 커밋만 카운트합니다.
+Actions 예약 실행이 지연되거나 누락될 수 있어 00:10, 00:20 KST 재시도도 함께 설정되어 있습니다. `.state/sent_summaries.json`으로 같은 날짜 요약 중복 전송을 막습니다.
+
+### 3. 랭킹과 스탯
+
+난이도별 점수는 다음 기준을 사용합니다.
+
+```text
+Lv.0 = 1점
+Lv.1 = 2점
+Lv.2 = 5점
+Lv.3 = 13점
+Lv.4 = 34점
+Lv.5 = 89점
+```
+
+종합 랭킹은 점수 기준입니다. 동점이면 총 COMMIT 수, 이름순으로 정렬합니다.
+
+등수 태그:
+
+```text
+1등 [OPUS]
+2등 [CODEX]
+3등 [개허접]
+```
+
+개인 스탯에는 종합 순위, 현재 점수, 총 누적 COMMIT, 이번 주 COMMIT, 이번 달 COMMIT, 하루 최대 COMMIT, 현재 연속 풀이일, 최장 연속 풀이일, 마지막 풀이 시각, 난이도별 풀이 수가 표시됩니다.
+
+## Discord 봇 명령어
+
+웹훅은 메시지를 보내기만 할 수 있고 `/help` 같은 명령어를 받을 수 없습니다. slash command를 쓰려면 `discord_bot.py`를 별도 서버, PC, Railway, Render 같은 곳에서 계속 실행해야 합니다.
+
+봇 명령어:
+
+```text
+/help
+/poll
+/summary
+/summary date:2026-05-18
+/weekly
+/ranking
+/stats name:박강호
+```
+
+`/help`는 사용 가능한 명령어 목록을 보여줍니다. `/poll`은 지금 기준 새 커밋을 확인합니다. `/summary`는 밤 12시에 오는 메시지와 같은 형식으로 요약을 보여줍니다. `/weekly`는 금주의 COMMIT 랭킹, `/ranking`은 난이도 점수 기반 종합 랭킹, `/stats`는 개인 스탯입니다.
+
+봇 실행에 필요한 환경변수:
+
+```text
+DISCORD_BOT_TOKEN
+FRIENDS_JSON
+GH_TOKEN 선택
+DISCORD_GUILD_ID 선택
+```
+
+`DISCORD_GUILD_ID`를 넣으면 해당 서버에 slash command가 더 빨리 반영됩니다. 없으면 전역 명령어로 등록되어 반영까지 시간이 걸릴 수 있습니다.
+
+로컬 PowerShell 예시:
+
+```powershell
+pip install -r requirements.txt
+$env:DISCORD_BOT_TOKEN='your bot token'
+$env:FRIENDS_JSON='[{"name":"박강호","owner":"ohgnakrap9290","repo":"programmers-study"},{"name":"이정찬","owner":"jungchan06","repo":"programmers-study"},{"name":"허윤혁","owner":"flains","repo":"programmers-study"}]'
+python discord_bot.py
+```
+
+Bot Token은 Discord Developer Portal에서 애플리케이션과 봇을 만든 뒤 발급합니다. 이 토큰은 절대 코드, README, workflow, 로그, 커밋 메시지에 넣지 않습니다.
 
 ## GitHub Secrets
 
-GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repository secret`으로 이동해 아래 값을 추가합니다.
+GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repository secret`으로 아래 값을 추가합니다.
 
 - `FRIENDS_JSON`: 멤버 저장소 정보
 - `DISCORD_WEBHOOK_URL`: Discord Webhook URL
-- `GH_TOKEN`: 선택 사항. public 저장소만 확인한다면 필요하지 않습니다.
+- `GH_TOKEN`: 선택 사항. public 저장소만 확인한다면 없어도 됩니다.
 
-`FRIENDS_JSON`에는 아래 값을 그대로 넣습니다.
+`FRIENDS_JSON` 값:
 
 ```json
 [
@@ -71,27 +131,36 @@ GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repo
 ]
 ```
 
-Discord Webhook URL은 Discord 채널 설정의 `연동` 또는 `Integrations` 메뉴에서 Webhook을 생성한 뒤 복사해서 `DISCORD_WEBHOOK_URL` secret에 넣습니다. Webhook URL은 코드, README, workflow, 로그, 커밋 메시지에 넣지 않습니다.
+Discord Webhook URL은 Discord 채널 설정의 `Integrations` 메뉴에서 Webhook을 생성해서 복사합니다. Webhook URL은 secret에만 넣고 코드에는 넣지 않습니다.
 
-## GitHub Actions 수동 실행
+## GitHub Actions
 
-즉시 알림 테스트:
+즉시 알림 workflow:
 
 ```text
 Actions -> Programmers Commit Poll -> Run workflow
 ```
 
-야간 요약 테스트:
+밤 12시 요약 workflow:
 
 ```text
 Actions -> Programmers Nightly Summary -> Run workflow
 ```
 
-수동 요약은 기본으로 오늘 KST 날짜를 요약합니다. 날짜 입력값을 넣으면 해당 날짜를 요약합니다.
+cron 기준:
+
+```text
+*/5 * * * *      5분마다 즉시 알림 확인
+0 15 * * *       00:00 KST 요약
+10 15 * * *      00:10 KST 재시도
+20 15 * * *      00:20 KST 재시도
+```
+
+GitHub Actions cron은 UTC 기준입니다.
 
 ## 로컬 테스트
 
-PowerShell 예시:
+PowerShell:
 
 ```powershell
 pip install -r requirements.txt
@@ -99,23 +168,15 @@ $env:FRIENDS_JSON='[{"name":"박강호","owner":"ohgnakrap9290","repo":"programm
 python programmers_check.py poll --dry-run
 python programmers_check.py summary --dry-run
 python programmers_check.py summary --date 2026-05-18 --dry-run
+python programmers_check.py weekly --dry-run
+python programmers_check.py ranking --dry-run
+python programmers_check.py stats 박강호 --dry-run
 ```
 
-`--dry-run`을 사용하면 Discord로 전송하지 않고 stdout에만 출력합니다. `DISCORD_WEBHOOK_URL`이 없어도 stdout에 출력됩니다.
-
-## 스케줄
-
-GitHub Actions cron은 UTC 기준입니다.
-
-- `*/5 * * * *`: 5분마다 즉시 알림 체크
-- `0 15 * * *`, `10 15 * * *`, `20 15 * * *`: 매일 15:00/15:10/15:20 UTC 실행, 한국 시간으로 00:00/00:10/00:20 KST
-
-두 workflow 파일은 `main` 브랜치의 `.github/workflows/` 아래에 있어야 예약 실행이 표시됩니다.
-
-스크립트의 날짜 기준은 `Asia/Seoul`입니다. 야간 요약 예약 실행은 기본적으로 실행 시점의 전날 KST 날짜를 집계합니다. 예를 들어 2026-05-19 00:00 KST에 실행되면 2026-05-18 기록을 요약합니다. GitHub Actions 예약 실행이 지연되거나 누락될 수 있어 00:00, 00:10, 00:20 KST에 재시도하며, `.state/sent_summaries.json`으로 같은 날짜 요약의 중복 전송을 막습니다.
+`--dry-run`을 쓰면 Discord로 보내지 않고 stdout에만 출력합니다. `DISCORD_WEBHOOK_URL`이 없어도 stdout으로 출력됩니다.
 
 ## 상태 파일
 
-즉시 알림은 `.state/seen_commits.json`에 이미 알림을 보낸 commit SHA를 저장합니다. GitHub Actions는 실행 간 로컬 파일을 유지하지 않으므로, polling workflow가 변경된 상태 파일을 이 저장소에 다시 commit/push합니다.
+즉시 알림은 `.state/seen_commits.json`에 이미 알린 commit SHA를 저장합니다. GitHub Actions 실행 환경은 매번 새로 만들어지므로, polling workflow가 상태 파일 변경분을 PGCHECK 저장소에 다시 commit/push합니다.
 
-첫 실행 때 상태 파일이 없으면 오늘 이미 존재하는 커밋을 모두 본 것으로 표시하고 알림을 보내지 않습니다. 이후 실행부터 새 풀이 커밋만 즉시 알림으로 전송합니다. 새 멤버 저장소가 추가되어 상태 파일에 아직 없을 때도 해당 저장소의 현재 풀이 커밋을 먼저 초기화하므로 기존 커밋을 한 번에 보내지 않습니다.
+처음 실행할 때는 기존 오늘 커밋을 전부 알림으로 보내지 않고 이미 본 것으로 초기화합니다. 이후 새로 생긴 커밋부터 즉시 알림을 보냅니다.
