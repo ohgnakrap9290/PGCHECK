@@ -303,6 +303,14 @@ def rank_tag(rank: int) -> str:
     return f"[{tag}]" if tag else ""
 
 
+def rank_label(rank: int) -> str:
+    if 10 <= rank % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank % 10, "th")
+    return f"{rank}{suffix}"
+
+
 def load_json_file(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -533,18 +541,22 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
     week_start, week_end = get_kst_week_range()
     lines = [
-        "**🏆 프로그래머스 상시 랭킹판**",
+        "**프로그래머스 랭킹판**",
         f"업데이트: {now}",
         "",
-        "**종합 랭킹**",
+        "종합 랭킹",
+        "------------------------------------",
     ]
     for rank, item in enumerate(sorted_ranking(stats), start=1):
-        lines.append(f"{rank}등 {item.friend.name}{rank_tag(rank)} · {item.score}점 · {item.total_commits} COMMIT")
+        lines.append(
+            f"**{rank_label(rank)} {item.friend.name} {rank_tag(rank)}** / {item.score}점 / {item.total_commits} COMMIT"
+        )
 
-    lines.extend(["", f"**금주의 COMMIT ({week_start} ~ {week_end})**"])
+    lines.extend(["------------------------------------", "", f"금주의 COMMIT ({week_start} ~ {week_end})", "------------------------------------"])
     for rank, item in enumerate(sorted_weekly(stats), start=1):
-        lines.append(f"{rank}등 {item.friend.name} · {item.week_commits} COMMIT")
+        lines.append(f"**{rank_label(rank)} {item.friend.name}** / {item.week_commits} COMMIT")
 
+    lines.append("------------------------------------")
     return "\n".join(lines)
 
 
