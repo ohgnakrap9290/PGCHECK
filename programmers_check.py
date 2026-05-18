@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -311,6 +312,13 @@ def rank_label(rank: int) -> str:
     return f"{rank}{suffix}"
 
 
+def display_width(value: str) -> int:
+    width = 0
+    for char in value:
+        width += 2 if unicodedata.east_asian_width(char) in ("F", "W") else 1
+    return width
+
+
 def load_json_file(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -539,7 +547,11 @@ def build_overall_ranking_message(stats: list[MemberStats]) -> str:
 
 def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
-    week_start, week_end = get_kst_week_range()
+    ranked = sorted_ranking(stats)
+    left_width = max(
+        (display_width(f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
+        default=0,
+    )
     lines = [
         "**프로그래머스 랭킹판**",
         f"업데이트: {now}",
@@ -547,14 +559,10 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
         "종합 랭킹",
         "------------------------------------",
     ]
-    for rank, item in enumerate(sorted_ranking(stats), start=1):
-        lines.append(
-            f"**{rank_label(rank)} {item.friend.name} {rank_tag(rank)}** / {item.score}점 / {item.total_commits} COMMIT"
-        )
-
-    lines.extend(["------------------------------------", "", f"금주의 COMMIT ({week_start} ~ {week_end})", "------------------------------------"])
-    for rank, item in enumerate(sorted_weekly(stats), start=1):
-        lines.append(f"**{rank_label(rank)} {item.friend.name}** / {item.week_commits} COMMIT")
+    for rank, item in enumerate(ranked, start=1):
+        left = f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}"
+        padding = " " * (left_width - display_width(left))
+        lines.append(f"**{left}**{padding} / {item.score}점 / {item.total_commits} COMMIT")
 
     lines.append("------------------------------------")
     return "\n".join(lines)
