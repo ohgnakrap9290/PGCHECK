@@ -75,8 +75,17 @@ def problem_title(commit: CommitInfo) -> str:
 def problem_level(commit: CommitInfo) -> str:
     match = re.search(r"\[level\s*(\d+)\]", commit.message, flags=re.IGNORECASE)
     if match:
-        return f"Lv. {match.group(1)}"
-    return "Lv. ?"
+        level = match.group(1)
+        colors = {
+            "0": "🟫",
+            "1": "⬜",
+            "2": "🟨",
+            "3": "🟩",
+            "4": "🟦",
+            "5": "🟥",
+        }
+        return f"Lv. **{level}** {colors.get(level, '')}".rstrip()
+    return "Lv. **?**"
 
 
 def parse_args() -> argparse.Namespace:
@@ -299,12 +308,12 @@ def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: 
     level = problem_level(commit)
     lines = [
         f"**✅ {friend.name} 1 COMMIT!**",
+        "------------------------",
         f"난이도: {level}",
         f"문제: {title}",
         f"총 누적: {total_count} COMMIT",
+        "------------------------",
     ]
-    if commit.url:
-        lines.append(commit.url)
     return "\n".join(lines)
 
 
