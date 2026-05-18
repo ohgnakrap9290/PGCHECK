@@ -16,7 +16,6 @@ import requests
 GITHUB_API_URL = "https://api.github.com"
 KST = ZoneInfo("Asia/Seoul")
 DISCORD_LIMIT = 2000
-MAX_SUMMARY_TEXT = DISCORD_LIMIT
 STATE_PATH = Path(".state/seen_commits.json")
 
 
@@ -168,7 +167,7 @@ def fetch_commits(
 ) -> list[CommitInfo]:
     commits: list[CommitInfo] = []
     url = f"{GITHUB_API_URL}/repos/{friend.owner}/{friend.repo}/commits"
-    params: dict[str, Any] = {
+    params: dict[str, Any] | None = {
         "since": since_utc,
         "until": until_utc,
         "per_page": 100,
@@ -289,7 +288,7 @@ def run_poll(dry_run: bool = False) -> int:
         current_shas = [commit.sha for commit in commits if commit.sha]
         seen = set(state.get(repo_key, []))
 
-        if not state_exists:
+        if not state_exists or repo_key not in state:
             state[repo_key] = current_shas
             changed = True
             print(f"{repo_key} state initialized")
@@ -299,7 +298,7 @@ def run_poll(dry_run: bool = False) -> int:
         for _commit in new_commits:
             send_discord_message(f"{friend.name} 1 COMMIT!", dry_run=dry_run)
 
-        if new_commits or repo_key not in state:
+        if new_commits:
             merged = list(dict.fromkeys(current_shas + state.get(repo_key, [])))
             state[repo_key] = merged[:500]
             changed = True
