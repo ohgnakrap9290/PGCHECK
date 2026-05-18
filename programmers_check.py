@@ -18,6 +18,7 @@ GITHUB_API_URL = "https://api.github.com"
 KST = ZoneInfo("Asia/Seoul")
 DISCORD_LIMIT = 2000
 STATE_PATH = Path(".state/seen_commits.json")
+SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
 
@@ -103,6 +104,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Discord로 보내지 않고 결과를 stdout에만 출력합니다.",
+    )
+    summary_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="해당 날짜 요약을 이미 보냈으면 다시 보내지 않습니다.",
     )
 
     return parser.parse_args()
@@ -272,6 +278,28 @@ def save_state(state: dict[str, list[str]]) -> None:
     )
 
 
+def load_summary_state() -> set[str]:
+    if not SUMMARY_STATE_PATH.exists():
+        return set()
+
+    try:
+        data = json.loads(SUMMARY_STATE_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{SUMMARY_STATE_PATH} 파일을 JSON으로 파싱할 수 없습니다: {exc}") from exc
+
+    if not isinstance(data, list):
+        raise ConfigError(f"{SUMMARY_STATE_PATH} 파일은 JSON 배열이어야 합니다.")
+    return {str(item) for item in data}
+
+
+def save_summary_state(sent_dates: set[str]) -> None:
+    SUMMARY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SUMMARY_STATE_PATH.write_text(
+        json.dumps(sorted(sent_dates), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def send_discord_message(content: str, dry_run: bool = False) -> None:
     content = truncate_discord_content(content)
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
@@ -371,11 +399,19 @@ def run_poll(dry_run: bool = False) -> int:
     return 0
 
 
-def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
+def run_summary(target_date: date | None = None, dry_run: bool = False, once: bool = False) -> int:
     friends = sorted(load_friends(), key=lambda friend: friend.name)
     session = github_session()
     if target_date is None:
         target_date = datetime.now(KST).date() - timedelta(days=1)
+    target_date_key = target_date.isoformat()
+
+    if once:
+        sent_dates = load_summary_state()
+        if target_date_key in sent_dates:
+            print(f"{target_date_key} summary already sent")
+            return 0
+
     since_utc, until_utc = get_kst_date_range(target_date)
 
     results: list[SummaryResult] = []
@@ -404,6 +440,10 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
             lines.append(f"❌ {result.friend.name}: 0 COMMIT")
 
     send_discord_message("\n".join(lines), dry_run=dry_run)
+    if once and not dry_run:
+        sent_dates = load_summary_state()
+        sent_dates.add(target_date_key)
+        save_summary_state(sent_dates)
     return 0
 
 
@@ -414,7 +454,7 @@ def main() -> int:
         if args.command == "poll":
             return run_poll(dry_run=args.dry_run)
         if args.command == "summary":
-            return run_summary(target_date=args.date, dry_run=args.dry_run)
+            return run_summary(target_date=args.date, dry_run=args.dry_run, once=args.once)
     except ConfigError as exc:
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2

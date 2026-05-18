@@ -3,16 +3,21 @@ name: Programmers Nightly Summary
 on:
   schedule:
     - cron: "0 15 * * *"
+    - cron: "10 15 * * *"
+    - cron: "20 15 * * *"
   workflow_dispatch:
     inputs:
       date:
-        description: "요약할 KST 날짜입니다. 비우면 수동 실행은 오늘, 예약 실행은 전날을 요약합니다. 예: 2026-05-18"
+        description: "KST date to summarize. Empty means today for manual runs and yesterday for scheduled runs. Example: 2026-05-18"
         required: false
         type: string
 
 jobs:
   summary:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -52,5 +57,19 @@ jobs:
           elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             python programmers_check.py summary --date "$(TZ=Asia/Seoul date +%F)"
           else
-            python programmers_check.py summary
+            python programmers_check.py summary --once
           fi
+
+      - name: Commit summary state
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          if [ -z "$(git status --porcelain -- .state/sent_summaries.json)" ]; then
+            echo "No summary state changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/sent_summaries.json
+          git commit -m "Update sent summaries state"
+          git push
