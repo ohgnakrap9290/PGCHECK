@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 15 * * *"
   workflow_dispatch:
+    inputs:
+      date:
+        description: "요약할 KST 날짜입니다. 비우면 수동 실행은 오늘, 예약 실행은 전날을 요약합니다. 예: 2026-05-18"
+        required: false
+        type: string
 
 jobs:
   summary:
@@ -40,4 +45,12 @@ jobs:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: python programmers_check.py summary
+          SUMMARY_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$SUMMARY_DATE" ]; then
+            python programmers_check.py summary --date "$SUMMARY_DATE"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            python programmers_check.py summary --date "$(TZ=Asia/Seoul date +%F)"
+          else
+            python programmers_check.py summary
+          fi
