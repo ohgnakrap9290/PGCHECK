@@ -20,9 +20,10 @@ KST = ZoneInfo("Asia/Seoul")
 DISCORD_LIMIT = 2000
 STATE_PATH = Path(".state/seen_commits.json")
 SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
+RANKING_STATE_PATH = Path(".state/ranking_message.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
-# Lv.0~5가 올라갈수록 체감 난도가 크게 뛰어서 피보나치식 가중치를 둡니다.
+# Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
 RANK_TAGS = {1: "OPUS", 2: "CODEX", 3: "개허접"}
 
@@ -88,6 +89,7 @@ def parse_args() -> argparse.Namespace:
 
     poll_parser = subparsers.add_parser("poll", help="새 풀이 커밋을 확인하고 즉시 알림을 보냅니다.")
     poll_parser.add_argument("--dry-run", action="store_true", help="Discord 전송과 상태 저장 없이 결과만 출력합니다.")
+    poll_parser.add_argument("--skip-board", action="store_true", help="상시 랭킹판 업데이트를 건너뜁니다.")
 
     summary_parser = subparsers.add_parser("summary", help="KST 날짜별 풀이 기록 요약을 보냅니다.")
     summary_parser.add_argument("--date", type=parse_kst_date, help="요약할 KST 날짜입니다. 형식: YYYY-MM-DD")
@@ -99,6 +101,9 @@ def parse_args() -> argparse.Namespace:
 
     ranking_parser = subparsers.add_parser("ranking", help="난이도 점수 기반 종합 랭킹을 보냅니다.")
     ranking_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
+
+    board_parser = subparsers.add_parser("board", help="상시 랭킹판 메시지를 생성하거나 수정합니다.")
+    board_parser.add_argument("--dry-run", action="store_true", help="Discord로 보내지 않고 stdout에만 출력합니다.")
 
     stats_parser = subparsers.add_parser("stats", help="개인 스탯을 보냅니다.")
     stats_parser.add_argument("name", help="멤버 이름")
@@ -144,7 +149,6 @@ def load_friends() -> list[Friend]:
 
     if not friends:
         raise ConfigError("FRIENDS_JSON에 멤버 정보가 없습니다.")
-
     return friends
 
 
@@ -299,15 +303,25 @@ def rank_tag(rank: int) -> str:
     return f"[{tag}]" if tag else ""
 
 
+def load_json_file(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{path} 파일을 JSON으로 파싱할 수 없습니다: {exc}") from exc
+
+
+def write_json_file(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def load_state() -> tuple[dict[str, list[str]], bool]:
     if not STATE_PATH.exists():
         return {}, False
 
-    try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"{STATE_PATH} 파일을 JSON으로 파싱할 수 없습니다: {exc}") from exc
-
+    data = load_json_file(STATE_PATH, {})
     if not isinstance(data, dict):
         raise ConfigError(f"{STATE_PATH} 파일은 JSON 객체여야 합니다.")
 
@@ -319,27 +333,30 @@ def load_state() -> tuple[dict[str, list[str]], bool]:
 
 
 def save_state(state: dict[str, list[str]]) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json_file(STATE_PATH, state)
 
 
 def load_summary_state() -> set[str]:
-    if not SUMMARY_STATE_PATH.exists():
-        return set()
-
-    try:
-        data = json.loads(SUMMARY_STATE_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"{SUMMARY_STATE_PATH} 파일을 JSON으로 파싱할 수 없습니다: {exc}") from exc
-
+    data = load_json_file(SUMMARY_STATE_PATH, [])
     if not isinstance(data, list):
         raise ConfigError(f"{SUMMARY_STATE_PATH} 파일은 JSON 배열이어야 합니다.")
     return {str(item) for item in data}
 
 
 def save_summary_state(sent_dates: set[str]) -> None:
-    SUMMARY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SUMMARY_STATE_PATH.write_text(json.dumps(sorted(sent_dates), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_file(SUMMARY_STATE_PATH, sorted(sent_dates))
+
+
+def load_ranking_state() -> dict[str, str]:
+    data = load_json_file(RANKING_STATE_PATH, {})
+    if not isinstance(data, dict):
+        raise ConfigError(f"{RANKING_STATE_PATH} 파일은 JSON 객체여야 합니다.")
+    message_id = data.get("message_id")
+    return {"message_id": str(message_id)} if message_id else {}
+
+
+def save_ranking_state(message_id: str) -> None:
+    write_json_file(RANKING_STATE_PATH, {"message_id": message_id})
 
 
 def send_discord_message(content: str, dry_run: bool = False) -> None:
@@ -355,6 +372,44 @@ def send_discord_message(content: str, dry_run: bool = False) -> None:
     response = requests.post(webhook_url, json={"content": content}, timeout=20)
     if response.status_code >= 400:
         raise RuntimeError(f"Discord webhook 전송 실패: HTTP {response.status_code}")
+
+
+def create_discord_webhook_message(content: str) -> str:
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        raise ConfigError("DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
+
+    response = requests.post(
+        webhook_url,
+        params={"wait": "true"},
+        json={"content": truncate_discord_content(content)},
+        timeout=20,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Discord ranking message 생성 실패: HTTP {response.status_code}")
+
+    payload = response.json()
+    message_id = payload.get("id")
+    if not message_id:
+        raise RuntimeError("Discord ranking message ID를 응답에서 찾을 수 없습니다.")
+    return str(message_id)
+
+
+def edit_discord_webhook_message(message_id: str, content: str) -> bool:
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        raise ConfigError("DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
+
+    response = requests.patch(
+        f"{webhook_url}/messages/{message_id}",
+        json={"content": truncate_discord_content(content)},
+        timeout=20,
+    )
+    if response.status_code == 404:
+        return False
+    if response.status_code >= 400:
+        raise RuntimeError(f"Discord ranking message 수정 실패: HTTP {response.status_code}")
+    return True
 
 
 def truncate_discord_content(content: str) -> str:
@@ -398,7 +453,6 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
             daily_counts[commit.kst_date] += 1
 
         solved_dates = set(daily_counts)
-        last_solved_at = max((commit.committed_at for commit in commits), default=None)
         stats.append(
             MemberStats(
                 friend=friend,
@@ -411,7 +465,7 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
                 max_daily_commits=max(daily_counts.values(), default=0),
                 current_streak=calculate_current_streak(solved_dates, today),
                 longest_streak=calculate_longest_streak(solved_dates),
-                last_solved_at=last_solved_at,
+                last_solved_at=max((commit.committed_at for commit in commits), default=None),
             )
         )
 
@@ -471,6 +525,25 @@ def build_overall_ranking_message(stats: list[MemberStats]) -> str:
     return "\n".join(lines)
 
 
+def build_ranking_board_message(stats: list[MemberStats]) -> str:
+    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+    week_start, week_end = get_kst_week_range()
+    lines = [
+        "**🏆 프로그래머스 상시 랭킹판**",
+        f"업데이트: {now}",
+        "",
+        "**종합 랭킹**",
+    ]
+    for rank, item in enumerate(sorted_ranking(stats), start=1):
+        lines.append(f"{rank}등 {item.friend.name}{rank_tag(rank)} · {item.score}점 · {item.total_commits} COMMIT")
+
+    lines.extend(["", f"**금주의 COMMIT ({week_start} ~ {week_end})**"])
+    for rank, item in enumerate(sorted_weekly(stats), start=1):
+        lines.append(f"{rank}등 {item.friend.name} · {item.week_commits} COMMIT")
+
+    return "\n".join(lines)
+
+
 def build_member_stats_message(stats: list[MemberStats], name: str) -> str:
     ranks = rank_lookup(stats)
     target = next((item for item in stats if item.friend.name == name), None)
@@ -525,7 +598,26 @@ def build_summary_message(target_date: date, results: list[SummaryResult], stats
     return "\n".join(lines)
 
 
-def run_poll(dry_run: bool = False) -> int:
+def update_ranking_board(session: requests.Session, friends: list[Friend], dry_run: bool = False) -> None:
+    stats = build_stats(session, friends)
+    content = build_ranking_board_message(stats)
+
+    if dry_run or not os.getenv("DISCORD_WEBHOOK_URL"):
+        print(content)
+        return
+
+    ranking_state = load_ranking_state()
+    message_id = ranking_state.get("message_id")
+    if message_id and edit_discord_webhook_message(message_id, content):
+        print(f"ranking board updated: {message_id}")
+        return
+
+    new_message_id = create_discord_webhook_message(content)
+    save_ranking_state(new_message_id)
+    print(f"ranking board created: {new_message_id}")
+
+
+def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
     friends = load_friends()
     session = github_session()
     target_date = datetime.now(KST).date()
@@ -579,6 +671,9 @@ def run_poll(dry_run: bool = False) -> int:
 
     if not state_exists:
         print("state initialized")
+
+    if not skip_board:
+        update_ranking_board(session, friends, dry_run=dry_run)
 
     return 0
 
@@ -635,6 +730,12 @@ def run_ranking(dry_run: bool = False) -> int:
     return 0
 
 
+def run_board(dry_run: bool = False) -> int:
+    session = github_session()
+    update_ranking_board(session, load_friends(), dry_run=dry_run)
+    return 0
+
+
 def run_stats(name: str, dry_run: bool = False) -> int:
     session = github_session()
     stats = build_stats(session, load_friends())
@@ -647,13 +748,15 @@ def main() -> int:
 
     try:
         if args.command == "poll":
-            return run_poll(dry_run=args.dry_run)
+            return run_poll(dry_run=args.dry_run, skip_board=args.skip_board)
         if args.command == "summary":
             return run_summary(target_date=args.date, dry_run=args.dry_run, once=args.once)
         if args.command == "weekly":
             return run_weekly(dry_run=args.dry_run)
         if args.command == "ranking":
             return run_ranking(dry_run=args.dry_run)
+        if args.command == "board":
+            return run_board(dry_run=args.dry_run)
         if args.command == "stats":
             return run_stats(name=args.name, dry_run=args.dry_run)
     except ConfigError as exc:

@@ -1,0 +1,72 @@
+name: Programmers Manual Stats
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "Stats member name. Example: 박강호"
+        required: true
+        type: string
+      kind:
+        description: "stats, ranking, weekly, or board"
+        required: true
+        default: "stats"
+        type: choice
+        options:
+          - stats
+          - ranking
+          - weekly
+          - board
+
+permissions:
+  contents: write
+
+jobs:
+  manual-stats:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send manual stats
+        env:
+          FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          STATS_NAME: ${{ inputs.name }}
+          STATS_KIND: ${{ inputs.kind }}
+        run: |
+          if [ "$STATS_KIND" = "stats" ]; then
+            python programmers_check.py stats "$STATS_NAME"
+          elif [ "$STATS_KIND" = "ranking" ]; then
+            python programmers_check.py ranking
+          elif [ "$STATS_KIND" = "weekly" ]; then
+            python programmers_check.py weekly
+          elif [ "$STATS_KIND" = "board" ]; then
+            python programmers_check.py board
+          else
+            echo "::error::Unknown stats kind: $STATS_KIND"
+            exit 1
+          fi
+
+      - name: Commit ranking board state
+        shell: bash
+        run: |
+          if [ -z "$(git status --porcelain -- .state/ranking_message.json)" ]; then
+            echo "No ranking board state changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/ranking_message.json
+          git commit -m "Update ranking board state"
+          git push

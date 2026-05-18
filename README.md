@@ -61,6 +61,29 @@ Lv.5 = 89점
 
 개인 스탯에는 종합 순위, 현재 점수, 총 누적 COMMIT, 이번 주 COMMIT, 이번 달 COMMIT, 하루 최대 COMMIT, 현재 연속 풀이일, 최장 연속 풀이일, 마지막 풀이 시각, 난이도별 풀이 수가 표시됩니다.
 
+### 4. 상시 랭킹판
+
+`Programmers Commit Poll` workflow가 5분마다 같은 Discord 메시지를 수정해서 상시 랭킹판을 최신 상태로 유지합니다. 새 메시지를 계속 보내는 방식이 아니라, 처음 한 번 만든 랭킹판 메시지를 계속 edit합니다.
+
+예시:
+
+```text
+**🏆 프로그래머스 상시 랭킹판**
+업데이트: 2026-05-19 18:35 KST
+
+**종합 랭킹**
+1등 박강호[OPUS] · 6점 · 6 COMMIT
+2등 허윤혁[CODEX] · 2점 · 2 COMMIT
+3등 이정찬[개허접] · 1점 · 1 COMMIT
+
+**금주의 COMMIT (2026-05-18 ~ 2026-05-19)**
+1등 박강호 · 6 COMMIT
+2등 허윤혁 · 2 COMMIT
+3등 이정찬 · 1 COMMIT
+```
+
+랭킹판 메시지 ID는 `.state/ranking_message.json`에 저장됩니다. 이 파일은 `.gitignore`에 넣으면 안 됩니다.
+
 ## Discord 봇 명령어
 
 웹훅은 메시지를 보내기만 할 수 있고 `/help` 같은 명령어를 받을 수 없습니다. slash command를 쓰려면 `discord_bot.py`를 별도 서버, PC, Railway, Render 같은 곳에서 계속 실행해야 합니다.
@@ -147,6 +170,21 @@ Actions -> Programmers Commit Poll -> Run workflow
 Actions -> Programmers Nightly Summary -> Run workflow
 ```
 
+개인 스탯/랭킹 수동 전송:
+
+```text
+Actions -> Programmers Manual Stats -> Run workflow
+```
+
+입력값:
+
+```text
+kind: stats, ranking, weekly, board 중 하나
+name: stats일 때 사용할 이름. 예: 박강호
+```
+
+`kind=stats`는 개인 스탯을 보냅니다. `kind=ranking`은 종합 랭킹, `kind=weekly`는 금주의 랭킹, `kind=board`는 상시 랭킹판을 즉시 생성하거나 수정합니다.
+
 cron 기준:
 
 ```text
@@ -170,6 +208,7 @@ python programmers_check.py summary --dry-run
 python programmers_check.py summary --date 2026-05-18 --dry-run
 python programmers_check.py weekly --dry-run
 python programmers_check.py ranking --dry-run
+python programmers_check.py board --dry-run
 python programmers_check.py stats 박강호 --dry-run
 ```
 
@@ -180,3 +219,5 @@ python programmers_check.py stats 박강호 --dry-run
 즉시 알림은 `.state/seen_commits.json`에 이미 알린 commit SHA를 저장합니다. GitHub Actions 실행 환경은 매번 새로 만들어지므로, polling workflow가 상태 파일 변경분을 PGCHECK 저장소에 다시 commit/push합니다.
 
 처음 실행할 때는 기존 오늘 커밋을 전부 알림으로 보내지 않고 이미 본 것으로 초기화합니다. 이후 새로 생긴 커밋부터 즉시 알림을 보냅니다.
+
+상시 랭킹판은 `.state/ranking_message.json`에 Discord 메시지 ID를 저장합니다. 메시지가 삭제되었거나 찾을 수 없으면 다음 실행 때 새 랭킹판 메시지를 만들고 ID를 다시 저장합니다.
