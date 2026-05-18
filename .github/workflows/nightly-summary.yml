@@ -1,9 +1,9 @@
 name: Programmers Nightly Summary
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: "0 15 * * *"
+  workflow_dispatch:
 
 jobs:
   summary:
