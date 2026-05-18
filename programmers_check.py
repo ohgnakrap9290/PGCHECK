@@ -60,6 +60,10 @@ def is_solution_commit(commit: CommitInfo) -> bool:
     return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
 
 
+def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
+    return [commit for commit in commits if is_solution_commit(commit)]
+
+
 def problem_title(commit: CommitInfo) -> str:
     message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
     match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
@@ -68,8 +72,11 @@ def problem_title(commit: CommitInfo) -> str:
     return message or "풀이 커밋"
 
 
-def commit_short_url(commit: CommitInfo) -> str:
-    return commit.url or ""
+def problem_level(commit: CommitInfo) -> str:
+    match = re.search(r"\[level\s*(\d+)\]", commit.message, flags=re.IGNORECASE)
+    if match:
+        return f"Lv. {match.group(1)}"
+    return "Lv. ?"
 
 
 def parse_args() -> argparse.Namespace:
@@ -180,16 +187,16 @@ def github_session() -> requests.Session:
 def fetch_commits(
     session: requests.Session,
     friend: Friend,
-    since_utc: str,
-    until_utc: str,
+    since_utc: str | None = None,
+    until_utc: str | None = None,
 ) -> list[CommitInfo]:
     commits: list[CommitInfo] = []
     url = f"{GITHUB_API_URL}/repos/{friend.owner}/{friend.repo}/commits"
-    params: dict[str, Any] | None = {
-        "since": since_utc,
-        "until": until_utc,
-        "per_page": 100,
-    }
+    params: dict[str, Any] | None = {"per_page": 100}
+    if since_utc:
+        params["since"] = since_utc
+    if until_utc:
+        params["until"] = until_utc
     if friend.branch:
         params["sha"] = friend.branch
 
@@ -287,15 +294,22 @@ def truncate_discord_content(content: str) -> str:
     return content[: DISCORD_LIMIT - len(suffix)].rstrip() + suffix
 
 
-def format_commit_notification(friend: Friend, commit: CommitInfo) -> str:
+def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: int) -> str:
+    title = problem_title(commit)
+    level = problem_level(commit)
     lines = [
-        f"✅ {friend.name} 새 풀이",
-        f"문제: {problem_title(commit)}",
+        f"**✅ {friend.name} 1 COMMIT!**",
+        f"난이도: {level}",
+        f"문제: {title}",
+        f"총 누적: {total_count} COMMIT",
     ]
-    url = commit_short_url(commit)
-    if url:
-        lines.append(url)
+    if commit.url:
+        lines.append(commit.url)
     return "\n".join(lines)
+
+
+def fetch_total_solution_count(session: requests.Session, friend: Friend) -> int:
+    return len(solution_commits(fetch_commits(session, friend)))
 
 
 def run_poll(dry_run: bool = False) -> int:
@@ -308,11 +322,7 @@ def run_poll(dry_run: bool = False) -> int:
 
     for friend in friends:
         try:
-            commits = [
-                commit
-                for commit in fetch_commits(session, friend, since_utc, until_utc)
-                if is_solution_commit(commit)
-            ]
+            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             continue
@@ -328,10 +338,19 @@ def run_poll(dry_run: bool = False) -> int:
             continue
 
         new_commits = [commit for commit in reversed(commits) if commit.sha and commit.sha not in seen]
-        for commit in new_commits:
-            send_discord_message(format_commit_notification(friend, commit), dry_run=dry_run)
-
         if new_commits:
+            try:
+                total_count = fetch_total_solution_count(session, friend)
+            except Exception as exc:
+                print(f"{friend.name} 총 누적 확인 실패: {exc}", file=sys.stderr)
+                total_count = len(set(state.get(repo_key, []) + current_shas))
+
+            for index, commit in enumerate(new_commits, start=1):
+                send_discord_message(
+                    format_commit_notification(friend, commit, total_count - len(new_commits) + index),
+                    dry_run=dry_run,
+                )
+
             merged = list(dict.fromkeys(current_shas + state.get(repo_key, [])))
             state[repo_key] = merged[:500]
             changed = True
@@ -361,11 +380,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
     results: list[SummaryResult] = []
     for friend in friends:
         try:
-            commits = [
-                commit
-                for commit in fetch_commits(session, friend, since_utc, until_utc)
-                if is_solution_commit(commit)
-            ]
+            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
             results.append(SummaryResult(friend=friend, count=len(commits)))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
@@ -374,7 +389,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
     total = sum(result.count for result in results if result.error is None)
     solved = sum(1 for result in results if result.error is None and result.count > 0)
     lines = [
-        f"📌 {target_date.isoformat()} 프로그래머스 기록",
+        f"**📌 {target_date.isoformat()} 프로그래머스 기록**",
         f"완료 {solved}/{len(results)}명 · 총 {total}문제",
         "",
     ]
@@ -383,9 +398,9 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
         if result.error:
             lines.append(f"⚠️ {result.friend.name}: 확인 실패")
         elif result.count > 0:
-            lines.append(f"✅ {result.friend.name}: {result.count}문제")
+            lines.append(f"✅ {result.friend.name}: {result.count} COMMIT")
         else:
-            lines.append(f"❌ {result.friend.name}: 기록 없음")
+            lines.append(f"❌ {result.friend.name}: 0 COMMIT")
 
     send_discord_message("\n".join(lines), dry_run=dry_run)
     return 0
