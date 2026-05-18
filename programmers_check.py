@@ -17,6 +17,7 @@ GITHUB_API_URL = "https://api.github.com"
 KST = ZoneInfo("Asia/Seoul")
 DISCORD_LIMIT = 2000
 STATE_PATH = Path(".state/seen_commits.json")
+SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -52,6 +53,10 @@ class SummaryResult:
     friend: Friend
     count: int = 0
     error: str | None = None
+
+
+def is_solution_commit(commit: CommitInfo) -> bool:
+    return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -279,7 +284,7 @@ def run_poll(dry_run: bool = False) -> int:
 
     for friend in friends:
         try:
-            commits = fetch_commits(session, friend, since_utc, until_utc)
+            commits = [commit for commit in fetch_commits(session, friend, since_utc, until_utc) if is_solution_commit(commit)]
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             continue
@@ -328,7 +333,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
     results: list[SummaryResult] = []
     for friend in friends:
         try:
-            commits = fetch_commits(session, friend, since_utc, until_utc)
+            commits = [commit for commit in fetch_commits(session, friend, since_utc, until_utc) if is_solution_commit(commit)]
             results.append(SummaryResult(friend=friend, count=len(commits)))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
