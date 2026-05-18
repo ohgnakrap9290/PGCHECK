@@ -1,0 +1,102 @@
+# PGCHECK
+
+BaekjoonHub가 자동으로 커밋하는 Programmers 풀이 저장소를 확인해서 Discord로 알림을 보내는 자동화 프로젝트입니다.
+
+대상 멤버:
+
+- 박강호: `ohgnakrap9290/programmers-study`
+- 이정찬: `jungchan06/programmers-study`
+
+## 동작 방식
+
+즉시 알림은 GitHub Actions에서 5분마다 실행됩니다. 각 멤버의 오늘 KST 기준 커밋을 확인하고, 이전 실행 이후 새 커밋이 있으면 커밋 1개당 Discord 메시지 1개를 보냅니다.
+
+즉시 알림 메시지 형식:
+
+```text
+박강호 1 COMMIT!
+```
+
+야간 요약은 매일 00:00 KST에 실행됩니다. 직전 KST 날짜의 커밋 수를 멤버별로 집계하고, 이름 기준 가나다순으로 정렬해서 보냅니다.
+
+야간 요약 형식:
+
+```text
+2026-05-18 프로그래머스 기록
+
+✅ 박강호 3 COMMIT
+❌ 이정찬 0
+```
+
+## GitHub Secrets
+
+GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repository secret`으로 이동해 아래 값을 추가합니다.
+
+- `FRIENDS_JSON`: 멤버 저장소 정보
+- `DISCORD_WEBHOOK_URL`: Discord Webhook URL
+- `GH_TOKEN`: 선택 사항. private 저장소 확인 또는 GitHub API rate limit 증가가 필요할 때 사용
+
+`FRIENDS_JSON`에는 아래 값을 그대로 넣습니다.
+
+```json
+[
+  {
+    "name": "박강호",
+    "owner": "ohgnakrap9290",
+    "repo": "programmers-study"
+  },
+  {
+    "name": "이정찬",
+    "owner": "jungchan06",
+    "repo": "programmers-study"
+  }
+]
+```
+
+public 저장소만 확인한다면 `GH_TOKEN` 없이도 동작합니다. private 저장소라면 해당 저장소를 읽을 수 있는 토큰을 `GH_TOKEN`에 등록해야 합니다.
+
+Discord Webhook URL은 Discord 채널 설정의 `연동` 또는 `Integrations` 메뉴에서 Webhook을 생성한 뒤 복사해서 `DISCORD_WEBHOOK_URL` secret에 넣습니다. Webhook URL은 코드, README, workflow, 로그, 커밋 메시지에 넣지 않습니다.
+
+## GitHub Actions 수동 실행
+
+즉시 알림 테스트:
+
+```text
+Actions -> Programmers Commit Poll -> Run workflow
+```
+
+야간 요약 테스트:
+
+```text
+Actions -> Programmers Nightly Summary -> Run workflow
+```
+
+## 로컬 테스트
+
+PowerShell 예시:
+
+```powershell
+pip install -r requirements.txt
+$env:FRIENDS_JSON='[{"name":"박강호","owner":"ohgnakrap9290","repo":"programmers-study"},{"name":"이정찬","owner":"jungchan06","repo":"programmers-study"}]'
+$env:DISCORD_WEBHOOK_URL='your webhook url'
+python programmers_check.py poll --dry-run
+python programmers_check.py summary --dry-run
+python programmers_check.py summary --date 2026-05-18 --dry-run
+```
+
+`--dry-run`을 사용하면 Discord로 전송하지 않고 stdout에만 출력합니다. `DISCORD_WEBHOOK_URL`이 없어도 stdout에 출력됩니다.
+
+## 스케줄
+
+GitHub Actions cron은 UTC 기준입니다.
+
+- `*/5 * * * *`: 5분마다 즉시 알림 체크
+- `0 15 * * *`: 매일 15:00 UTC 실행, 한국 시간으로 00:00 KST
+
+스크립트의 날짜 기준은 `Asia/Seoul`입니다. 야간 요약은 기본적으로 실행 시점의 전날 KST 날짜를 집계합니다. 예를 들어 2026-05-19 00:00 KST에 실행되면 2026-05-18 기록을 요약합니다.
+
+## 상태 파일
+
+즉시 알림은 `.state/seen_commits.json`에 이미 알림을 보낸 commit SHA를 저장합니다. GitHub Actions는 실행 간 로컬 파일을 유지하지 않으므로, polling workflow가 변경된 상태 파일을 이 저장소에 다시 commit/push합니다.
+
+첫 실행 때 상태 파일이 없으면 오늘 이미 존재하는 커밋을 모두 본 것으로 표시하고 알림을 보내지 않습니다. 이후 실행부터 새 커밋만 즉시 알림으로 전송합니다.
