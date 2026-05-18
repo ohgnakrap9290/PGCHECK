@@ -374,10 +374,14 @@ def send_discord_message(content: str, dry_run: bool = False) -> None:
         raise RuntimeError(f"Discord webhook 전송 실패: HTTP {response.status_code}")
 
 
+def ranking_webhook_url() -> str | None:
+    return os.getenv("DISCORD_RANKING_WEBHOOK_URL") or os.getenv("DISCORD_WEBHOOK_URL")
+
+
 def create_discord_webhook_message(content: str) -> str:
-    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    webhook_url = ranking_webhook_url()
     if not webhook_url:
-        raise ConfigError("DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
+        raise ConfigError("DISCORD_RANKING_WEBHOOK_URL 또는 DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
 
     response = requests.post(
         webhook_url,
@@ -396,9 +400,9 @@ def create_discord_webhook_message(content: str) -> str:
 
 
 def edit_discord_webhook_message(message_id: str, content: str) -> bool:
-    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    webhook_url = ranking_webhook_url()
     if not webhook_url:
-        raise ConfigError("DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
+        raise ConfigError("DISCORD_RANKING_WEBHOOK_URL 또는 DISCORD_WEBHOOK_URL 환경변수가 없습니다.")
 
     response = requests.patch(
         f"{webhook_url}/messages/{message_id}",
@@ -602,7 +606,7 @@ def update_ranking_board(session: requests.Session, friends: list[Friend], dry_r
     stats = build_stats(session, friends)
     content = build_ranking_board_message(stats)
 
-    if dry_run or not os.getenv("DISCORD_WEBHOOK_URL"):
+    if dry_run or not ranking_webhook_url():
         print(content)
         return
 

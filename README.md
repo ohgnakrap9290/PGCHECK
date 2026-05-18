@@ -84,6 +84,8 @@ Lv.5 = 89점
 
 랭킹판 메시지 ID는 `.state/ranking_message.json`에 저장됩니다. 이 파일은 `.gitignore`에 넣으면 안 됩니다.
 
+랭킹판은 `DISCORD_RANKING_WEBHOOK_URL` secret이 있으면 그 채널에 생성/수정됩니다. 이 값이 없으면 기존 `DISCORD_WEBHOOK_URL` 채널을 사용합니다. 커밋 알림과 밤 12시 요약은 계속 `DISCORD_WEBHOOK_URL`을 사용합니다.
+
 ## Discord 봇 명령어
 
 웹훅은 메시지를 보내기만 할 수 있고 `/help` 같은 명령어를 받을 수 없습니다. slash command를 쓰려면 `discord_bot.py`를 별도 서버, PC, Railway, Render 같은 곳에서 계속 실행해야 합니다.
@@ -130,6 +132,7 @@ GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repo
 
 - `FRIENDS_JSON`: 멤버 저장소 정보
 - `DISCORD_WEBHOOK_URL`: Discord Webhook URL
+- `DISCORD_RANKING_WEBHOOK_URL`: 선택 사항. 상시 랭킹판 전용 Discord Webhook URL
 - `GH_TOKEN`: 선택 사항. public 저장소만 확인한다면 없어도 됩니다.
 
 `FRIENDS_JSON` 값:

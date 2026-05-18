@@ -46,6 +46,7 @@ jobs:
         env:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_RANKING_WEBHOOK_URL: ${{ secrets.DISCORD_RANKING_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: python programmers_check.py poll
 

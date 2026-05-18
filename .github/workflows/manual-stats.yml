@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       name:
-        description: "Stats member name. Example: 박강호"
+        description: "Stats member name. Example: Park"
         required: true
         type: string
       kind:
@@ -41,6 +41,7 @@ jobs:
         env:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_RANKING_WEBHOOK_URL: ${{ secrets.DISCORD_RANKING_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           STATS_NAME: ${{ inputs.name }}
           STATS_KIND: ${{ inputs.kind }}
