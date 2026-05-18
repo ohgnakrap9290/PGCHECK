@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -59,20 +60,32 @@ def is_solution_commit(commit: CommitInfo) -> bool:
     return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
 
 
+def problem_title(commit: CommitInfo) -> str:
+    message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
+    match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
+    if match:
+        return match.group(1).strip()
+    return message or "풀이 커밋"
+
+
+def commit_short_url(commit: CommitInfo) -> str:
+    return commit.url or ""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Programmers 풀이 저장소의 GitHub 커밋을 확인하고 Discord로 알립니다."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    poll_parser = subparsers.add_parser("poll", help="새 커밋을 확인하고 즉시 알림을 보냅니다.")
+    poll_parser = subparsers.add_parser("poll", help="새 풀이 커밋을 확인하고 즉시 알림을 보냅니다.")
     poll_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Discord 전송과 상태 저장 없이 결과만 출력합니다.",
     )
 
-    summary_parser = subparsers.add_parser("summary", help="KST 날짜별 커밋 요약을 보냅니다.")
+    summary_parser = subparsers.add_parser("summary", help="KST 날짜별 풀이 기록 요약을 보냅니다.")
     summary_parser.add_argument(
         "--date",
         type=parse_kst_date,
@@ -274,6 +287,17 @@ def truncate_discord_content(content: str) -> str:
     return content[: DISCORD_LIMIT - len(suffix)].rstrip() + suffix
 
 
+def format_commit_notification(friend: Friend, commit: CommitInfo) -> str:
+    lines = [
+        f"✅ {friend.name} 새 풀이",
+        f"문제: {problem_title(commit)}",
+    ]
+    url = commit_short_url(commit)
+    if url:
+        lines.append(url)
+    return "\n".join(lines)
+
+
 def run_poll(dry_run: bool = False) -> int:
     friends = load_friends()
     session = github_session()
@@ -284,7 +308,11 @@ def run_poll(dry_run: bool = False) -> int:
 
     for friend in friends:
         try:
-            commits = [commit for commit in fetch_commits(session, friend, since_utc, until_utc) if is_solution_commit(commit)]
+            commits = [
+                commit
+                for commit in fetch_commits(session, friend, since_utc, until_utc)
+                if is_solution_commit(commit)
+            ]
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             continue
@@ -300,8 +328,8 @@ def run_poll(dry_run: bool = False) -> int:
             continue
 
         new_commits = [commit for commit in reversed(commits) if commit.sha and commit.sha not in seen]
-        for _commit in new_commits:
-            send_discord_message(f"{friend.name} 1 COMMIT!", dry_run=dry_run)
+        for commit in new_commits:
+            send_discord_message(format_commit_notification(friend, commit), dry_run=dry_run)
 
         if new_commits:
             merged = list(dict.fromkeys(current_shas + state.get(repo_key, [])))
@@ -333,20 +361,31 @@ def run_summary(target_date: date | None = None, dry_run: bool = False) -> int:
     results: list[SummaryResult] = []
     for friend in friends:
         try:
-            commits = [commit for commit in fetch_commits(session, friend, since_utc, until_utc) if is_solution_commit(commit)]
+            commits = [
+                commit
+                for commit in fetch_commits(session, friend, since_utc, until_utc)
+                if is_solution_commit(commit)
+            ]
             results.append(SummaryResult(friend=friend, count=len(commits)))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             results.append(SummaryResult(friend=friend, error=str(exc)))
 
-    lines = [f"{target_date.isoformat()} 프로그래머스 기록", ""]
+    total = sum(result.count for result in results if result.error is None)
+    solved = sum(1 for result in results if result.error is None and result.count > 0)
+    lines = [
+        f"📌 {target_date.isoformat()} 프로그래머스 기록",
+        f"완료 {solved}/{len(results)}명 · 총 {total}문제",
+        "",
+    ]
+
     for result in results:
         if result.error:
-            lines.append(f"⚠️ {result.friend.name} 확인 실패")
+            lines.append(f"⚠️ {result.friend.name}: 확인 실패")
         elif result.count > 0:
-            lines.append(f"✅ {result.friend.name} {result.count} COMMIT")
+            lines.append(f"✅ {result.friend.name}: {result.count}문제")
         else:
-            lines.append(f"❌ {result.friend.name} 0")
+            lines.append(f"❌ {result.friend.name}: 기록 없음")
 
     send_discord_message("\n".join(lines), dry_run=dry_run)
     return 0
