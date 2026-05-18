@@ -76,16 +76,8 @@ def problem_level(commit: CommitInfo) -> str:
     match = re.search(r"\[level\s*(\d+)\]", commit.message, flags=re.IGNORECASE)
     if match:
         level = match.group(1)
-        colors = {
-            "0": "🟫",
-            "1": "⬜",
-            "2": "🟨",
-            "3": "🟩",
-            "4": "🟦",
-            "5": "🟥",
-        }
-        return f"Lv. **{level}** {colors.get(level, '')}".rstrip()
-    return "Lv. **?**"
+        return f"Lv. {level * 6}"
+    return "Lv. ??????"
 
 
 def parse_args() -> argparse.Namespace:
