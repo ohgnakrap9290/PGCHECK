@@ -28,6 +28,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate secrets
+        env:
+          FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$FRIENDS_JSON" ]; then
+            echo "::error::FRIENDS_JSON secret is not set"
+            exit 1
+          fi
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::error::DISCORD_WEBHOOK_URL secret is not set"
+            exit 1
+          fi
+
       - name: Poll commits
         env:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
