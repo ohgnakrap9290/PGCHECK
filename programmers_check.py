@@ -825,13 +825,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             results.append(SummaryResult(friend=friend, error=str(exc)))
 
-    stats: list[MemberStats] | None = None
-    try:
-        stats = build_stats(session, friends, today=target_date)
-    except Exception as exc:
-        print(f"랭킹 계산 실패: {exc}", file=sys.stderr)
-
-    send_discord_message(build_summary_message(target_date, results, stats), dry_run=dry_run)
+    send_discord_message(build_summary_message(target_date, results), dry_run=dry_run)
     if once and not dry_run:
         sent_dates = load_summary_state()
         sent_dates.add(target_date_key)
