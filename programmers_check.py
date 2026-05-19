@@ -22,11 +22,26 @@ DISCORD_LIMIT = 2000
 STATE_PATH = Path(".state/seen_commits.json")
 SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
 RANKING_STATE_PATH = Path(".state/ranking_message.json")
+LANGUAGE_CACHE_PATH = Path(".state/commit_languages.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
 RANK_TAGS = {1: "OPUS", 2: "CODEX", 3: "개허접"}
+LANGUAGE_EXTENSIONS = {
+    ".py": "Python",
+    ".c": "C",
+    ".cc": "C++",
+    ".cpp": "C++",
+    ".cxx": "C++",
+    ".java": "Java",
+    ".js": "JavaScript",
+    ".ts": "TypeScript",
+    ".kt": "Kotlin",
+    ".swift": "Swift",
+    ".go": "Go",
+    ".rs": "Rust",
+}
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -68,6 +83,8 @@ class MemberStats:
     commits: tuple[CommitInfo, ...]
     score: int
     level_counts: dict[int, int]
+    language_counts: dict[str, int]
+    primary_language: str
     total_commits: int
     week_commits: int
     month_commits: int
@@ -247,6 +264,24 @@ def fetch_commits(
     return commits
 
 
+def fetch_commit_files(session: requests.Session, friend: Friend, sha: str) -> list[str]:
+    url = f"{GITHUB_API_URL}/repos/{friend.owner}/{friend.repo}/commits/{sha}"
+    response = session.get(url, timeout=20)
+    if response.status_code >= 400:
+        raise RuntimeError(format_github_error(response, friend))
+
+    payload = response.json()
+    files = payload.get("files", []) if isinstance(payload, dict) else []
+    if not isinstance(files, list):
+        return []
+
+    filenames: list[str] = []
+    for item in files:
+        if isinstance(item, dict) and item.get("filename"):
+            filenames.append(str(item["filename"]))
+    return filenames
+
+
 def format_github_error(response: requests.Response, friend: Friend) -> str:
     try:
         body = response.json()
@@ -297,6 +332,50 @@ def commit_points(commit: CommitInfo) -> int:
     if level is None:
         return 1
     return LEVEL_POINTS[level]
+
+
+def language_from_filename(filename: str) -> str | None:
+    suffix = Path(filename).suffix.lower()
+    return LANGUAGE_EXTENSIONS.get(suffix)
+
+
+def load_language_cache() -> dict[str, str]:
+    data = load_json_file(LANGUAGE_CACHE_PATH, {})
+    if not isinstance(data, dict):
+        raise ConfigError(f"{LANGUAGE_CACHE_PATH} 파일은 JSON 객체여야 합니다.")
+    return {str(key): str(value) for key, value in data.items() if value}
+
+
+def save_language_cache(cache: dict[str, str]) -> None:
+    write_json_file(LANGUAGE_CACHE_PATH, cache)
+
+
+def commit_language(
+    session: requests.Session,
+    friend: Friend,
+    commit: CommitInfo,
+    cache: dict[str, str],
+) -> tuple[str | None, bool]:
+    if not commit.sha:
+        return None, False
+
+    cache_key = f"{friend.repo_key}:{commit.sha}"
+    if cache_key in cache:
+        return cache[cache_key], False
+
+    try:
+        filenames = fetch_commit_files(session, friend, commit.sha)
+    except Exception as exc:
+        print(f"{friend.name} 언어 확인 실패: {exc}", file=sys.stderr)
+        return None, False
+
+    languages = [language for filename in filenames if (language := language_from_filename(filename))]
+    if not languages:
+        return None, False
+
+    language = Counter(languages).most_common(1)[0][0]
+    cache[cache_key] = language
+    return language, True
 
 
 def rank_tag(rank: int) -> str:
@@ -458,10 +537,13 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
     week_start, week_end = get_kst_week_range(today)
     month_start = today.replace(day=1)
     stats: list[MemberStats] = []
+    language_cache = load_language_cache()
+    language_cache_changed = False
 
     for friend in friends:
         commits = tuple(solution_commits(fetch_commits(session, friend)))
         level_counts: Counter[int] = Counter()
+        language_counts: Counter[str] = Counter()
         daily_counts: Counter[date] = Counter()
         score = 0
 
@@ -469,16 +551,23 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
             level = problem_level_number(commit)
             if level is not None:
                 level_counts[level] += 1
+            language, language_changed = commit_language(session, friend, commit, language_cache)
+            if language:
+                language_counts[language] += 1
+            language_cache_changed = language_cache_changed or language_changed
             score += commit_points(commit)
             daily_counts[commit.kst_date] += 1
 
         solved_dates = set(daily_counts)
+        primary_language = language_counts.most_common(1)[0][0] if language_counts else "Unknown"
         stats.append(
             MemberStats(
                 friend=friend,
                 commits=commits,
                 score=score,
                 level_counts={level: level_counts.get(level, 0) for level in range(6)},
+                language_counts=dict(language_counts),
+                primary_language=primary_language,
                 total_commits=len(commits),
                 week_commits=sum(1 for commit in commits if week_start <= commit.kst_date <= week_end),
                 month_commits=sum(1 for commit in commits if month_start <= commit.kst_date <= today),
@@ -488,6 +577,9 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
                 last_solved_at=max((commit.committed_at for commit in commits), default=None),
             )
         )
+
+    if language_cache_changed:
+        save_language_cache(language_cache)
 
     return stats
 
@@ -541,7 +633,10 @@ def build_weekly_ranking_message(stats: list[MemberStats], target_date: date | N
 def build_overall_ranking_message(stats: list[MemberStats]) -> str:
     lines = ["**🏆 종합 랭킹**"]
     for rank, item in enumerate(sorted_ranking(stats), start=1):
-        lines.append(f"{rank}등 {item.friend.name}{rank_tag(rank)}: {item.score}점 / {item.total_commits} COMMIT")
+        lines.append(
+            f"{rank}등 {item.friend.name}{rank_tag(rank)} / {item.primary_language}: "
+            f"{item.score}점 / {item.total_commits} COMMIT"
+        )
     return "\n".join(lines)
 
 
@@ -549,7 +644,7 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
     ranked = sorted_ranking(stats)
     left_width = max(
-        (display_width(f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
+        (display_width(f"{rank_label(rank)} {item.friend.name}{rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
         default=0,
     )
     lines = [
@@ -560,9 +655,9 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
         "------------------------------------",
     ]
     for rank, item in enumerate(ranked, start=1):
-        left = f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}"
+        left = f"{rank_label(rank)} {item.friend.name}{rank_tag(rank)}"
         padding = " " * (left_width - display_width(left))
-        lines.append(f"**{left}**{padding} / {item.score}점 / {item.total_commits} COMMIT")
+        lines.append(f"**{left}**{padding} / {item.primary_language} / {item.score}점 / {item.total_commits} COMMIT")
 
     lines.append("------------------------------------")
     return "\n".join(lines)
@@ -583,6 +678,7 @@ def build_member_stats_message(stats: list[MemberStats], name: str) -> str:
     lines = [
         f"**📊 {target.friend.name} 스탯**",
         f"종합 순위: {rank}등 {rank_tag(rank)}",
+        f"주 언어: {target.primary_language}",
         f"현재 점수: {target.score}점",
         f"총 누적: {target.total_commits} COMMIT",
         f"이번 주: {target.week_commits} COMMIT",
@@ -596,6 +692,10 @@ def build_member_stats_message(stats: list[MemberStats], name: str) -> str:
     ]
     for level in range(6):
         lines.append(f"Lv.{level}: {target.level_counts.get(level, 0)}문제")
+    if target.language_counts:
+        lines.extend(["", "언어 분포"])
+        for language, count in sorted(target.language_counts.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"{language}: {count}문제")
     return "\n".join(lines)
 
 

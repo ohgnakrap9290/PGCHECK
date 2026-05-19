@@ -49,7 +49,7 @@ jobs:
         env:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           SUMMARY_DATE: ${{ inputs.date }}
         run: |
           if [ -n "$SUMMARY_DATE" ]; then
@@ -64,12 +64,12 @@ jobs:
         if: github.event_name == 'schedule'
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- .state/sent_summaries.json)" ]; then
+          if [ -z "$(git status --porcelain -- .state/sent_summaries.json .state/commit_languages.json)" ]; then
             echo "No summary state changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .state/sent_summaries.json
+          git add .state/sent_summaries.json .state/commit_languages.json
           git commit -m "Update sent summaries state"
           git push

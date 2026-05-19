@@ -42,7 +42,7 @@ jobs:
           FRIENDS_JSON: ${{ secrets.FRIENDS_JSON }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_RANKING_WEBHOOK_URL: ${{ secrets.DISCORD_RANKING_WEBHOOK_URL }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           STATS_NAME: ${{ inputs.name }}
           STATS_KIND: ${{ inputs.kind }}
         run: |
@@ -62,12 +62,12 @@ jobs:
       - name: Commit ranking board state
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- .state/ranking_message.json)" ]; then
+          if [ -z "$(git status --porcelain -- .state/ranking_message.json .state/commit_languages.json)" ]; then
             echo "No ranking board state changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .state/ranking_message.json
+          git add .state/ranking_message.json .state/commit_languages.json
           git commit -m "Update ranking board state"
           git push
