@@ -52,8 +52,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
           SUMMARY_DATE: ${{ inputs.date }}
         run: |
+          SUMMARY_DATE="$(echo "$SUMMARY_DATE" | xargs)"
           if [ -n "$SUMMARY_DATE" ]; then
-            python programmers_check.py summary --date "$SUMMARY_DATE"
+            if echo "$SUMMARY_DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+              python programmers_check.py summary --date "$SUMMARY_DATE"
+            else
+              echo "::warning::Invalid date input '$SUMMARY_DATE'. Using today's KST date for manual summary."
+              python programmers_check.py summary --date "$(TZ=Asia/Seoul date +%F)"
+            fi
           elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             python programmers_check.py summary --date "$(TZ=Asia/Seoul date +%F)"
           else
@@ -61,7 +67,6 @@ jobs:
           fi
 
       - name: Commit summary state
-        if: github.event_name == 'schedule'
         shell: bash
         run: |
           if [ -z "$(git status --porcelain -- .state/sent_summaries.json .state/commit_languages.json)" ]; then
