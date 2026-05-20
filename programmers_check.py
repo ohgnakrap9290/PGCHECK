@@ -648,10 +648,6 @@ def build_overall_ranking_message(stats: list[MemberStats]) -> str:
 def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
     ranked = sorted_ranking(stats)
-    left_width = max(
-        (display_width(f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
-        default=0,
-    )
     lines = [
         "**프로그래머스 랭킹판**",
         f"업데이트: {now}",
@@ -661,8 +657,7 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
     ]
     for rank, item in enumerate(ranked, start=1):
         left = f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}"
-        padding = " " * (left_width - display_width(left))
-        lines.append(f"**{left}**{padding} / {item.primary_language} / {item.score}점 / {item.total_commits} COMMIT")
+        lines.append(f"**{left}** / {item.primary_language} / {item.score}점 / {item.total_commits} COMMIT")
 
     lines.append("------------------------------------")
     return "\n".join(lines)

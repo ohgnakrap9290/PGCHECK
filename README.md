@@ -73,9 +73,9 @@ Lv.5 = 89점
 
 종합 랭킹
 ------------------------------------
-**1st 박강호 [OPUS]**     / Python / 6점 / 6 COMMIT
+**1st 박강호 [OPUS]** / Python / 6점 / 6 COMMIT
 **2nd 허윤혁 [COMPILER]** / C / 2점 / 2 COMMIT
-**3rd 이정찬 [BUG]**      / C / 1점 / 1 COMMIT
+**3rd 이정찬 [BUG]** / C / 1점 / 1 COMMIT
 ------------------------------------
 ```
 
