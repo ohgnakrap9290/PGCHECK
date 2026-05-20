@@ -27,7 +27,7 @@ SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
-RANK_TAGS = {1: "OPUS", 2: "CODEX", 3: "개허접"}
+RANK_TAGS = {1: "OPUS", 2: "COMPILER", 3: "BUG"}
 LANGUAGE_EXTENSIONS = {
     ".py": "Python",
     ".c": "C",
@@ -532,7 +532,12 @@ def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: 
     )
 
 
-def build_stats(session: requests.Session, friends: list[Friend], today: date | None = None) -> list[MemberStats]:
+def build_stats(
+    session: requests.Session,
+    friends: list[Friend],
+    today: date | None = None,
+    persist_language_cache: bool = True,
+) -> list[MemberStats]:
     today = today or datetime.now(KST).date()
     week_start, week_end = get_kst_week_range(today)
     month_start = today.replace(day=1)
@@ -578,7 +583,7 @@ def build_stats(session: requests.Session, friends: list[Friend], today: date | 
             )
         )
 
-    if language_cache_changed:
+    if language_cache_changed and persist_language_cache:
         save_language_cache(language_cache)
 
     return stats
@@ -644,7 +649,7 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
     ranked = sorted_ranking(stats)
     left_width = max(
-        (display_width(f"{rank_label(rank)} {item.friend.name}{rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
+        (display_width(f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}") for rank, item in enumerate(ranked, start=1)),
         default=0,
     )
     lines = [
@@ -655,7 +660,7 @@ def build_ranking_board_message(stats: list[MemberStats]) -> str:
         "------------------------------------",
     ]
     for rank, item in enumerate(ranked, start=1):
-        left = f"{rank_label(rank)} {item.friend.name}{rank_tag(rank)}"
+        left = f"{rank_label(rank)} {item.friend.name} {rank_tag(rank)}"
         padding = " " * (left_width - display_width(left))
         lines.append(f"**{left}**{padding} / {item.primary_language} / {item.score}점 / {item.total_commits} COMMIT")
 
@@ -723,7 +728,7 @@ def build_summary_message(target_date: date, results: list[SummaryResult], stats
 
 
 def update_ranking_board(session: requests.Session, friends: list[Friend], dry_run: bool = False) -> None:
-    stats = build_stats(session, friends)
+    stats = build_stats(session, friends, persist_language_cache=not dry_run)
     content = build_ranking_board_message(stats)
 
     if dry_run or not ranking_webhook_url():
