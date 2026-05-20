@@ -304,6 +304,23 @@ def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
     return [commit for commit in commits if is_solution_commit(commit)]
 
 
+def problem_key(commit: CommitInfo) -> str:
+    title = re.sub(r"\s+", " ", problem_title(commit)).strip().casefold()
+    level = problem_level_number(commit)
+    return f"{level if level is not None else 'unknown'}:{title}"
+
+
+def unique_solution_commits(commits: list[CommitInfo] | tuple[CommitInfo, ...]) -> list[CommitInfo]:
+    unique: dict[str, CommitInfo] = {}
+    for commit in sorted(commits, key=lambda item: item.committed_at):
+        unique.setdefault(problem_key(commit), commit)
+    return list(unique.values())
+
+
+def unique_solution_count(commits: list[CommitInfo] | tuple[CommitInfo, ...]) -> int:
+    return len(unique_solution_commits(commits))
+
+
 def problem_title(commit: CommitInfo) -> str:
     message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
     match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
@@ -546,7 +563,8 @@ def build_stats(
     language_cache_changed = False
 
     for friend in friends:
-        commits = tuple(solution_commits(fetch_commits(session, friend)))
+        all_commits = tuple(solution_commits(fetch_commits(session, friend)))
+        commits = tuple(unique_solution_commits(all_commits))
         level_counts: Counter[int] = Counter()
         language_counts: Counter[str] = Counter()
         daily_counts: Counter[date] = Counter()
@@ -561,7 +579,9 @@ def build_stats(
                 language_counts[language] += 1
             language_cache_changed = language_cache_changed or language_changed
             score += commit_points(commit)
-            daily_counts[commit.kst_date] += 1
+
+        for _, solved_date in {(problem_key(commit), commit.kst_date) for commit in all_commits}:
+            daily_counts[solved_date] += 1
 
         solved_dates = set(daily_counts)
         primary_language = language_counts.most_common(1)[0][0] if language_counts else "Unknown"
@@ -768,15 +788,32 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
 
         new_commits = [commit for commit in reversed(commits) if commit.sha and commit.sha not in seen]
         if new_commits:
+            all_solution_commits = commits
             try:
-                total_count = len(solution_commits(fetch_commits(session, friend)))
+                all_solution_commits = solution_commits(fetch_commits(session, friend))
+                total_count = unique_solution_count(all_solution_commits)
             except Exception as exc:
                 print(f"{friend.name} 총 누적 확인 실패: {exc}", file=sys.stderr)
                 total_count = len(set(state.get(repo_key, []) + current_shas))
 
-            for index, commit in enumerate(new_commits, start=1):
+            new_shas = {commit.sha for commit in new_commits}
+            known_problem_keys = {
+                problem_key(commit)
+                for commit in all_solution_commits
+                if commit.sha and commit.sha not in new_shas
+            }
+            notify_commits: list[CommitInfo] = []
+            for commit in new_commits:
+                key = problem_key(commit)
+                if key in known_problem_keys:
+                    print(f"{friend.name} duplicate submission skipped: {problem_title(commit)}")
+                    continue
+                notify_commits.append(commit)
+                known_problem_keys.add(key)
+
+            for commit in notify_commits:
                 send_discord_message(
-                    format_commit_notification(friend, commit, total_count - len(new_commits) + index),
+                    format_commit_notification(friend, commit, total_count),
                     dry_run=dry_run,
                 )
 
@@ -820,7 +857,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
     for friend in friends:
         try:
             commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
-            results.append(SummaryResult(friend=friend, count=len(commits)))
+            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits)))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             results.append(SummaryResult(friend=friend, error=str(exc)))

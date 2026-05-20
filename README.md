@@ -223,3 +223,5 @@ python programmers_check.py stats 박강호 --dry-run
 상시 랭킹판은 `.state/ranking_message.json`에 Discord 메시지 ID를 저장합니다. 메시지가 삭제되었거나 찾을 수 없으면 다음 실행 때 새 랭킹판 메시지를 만들고 ID를 다시 저장합니다.
 
 언어 표시는 커밋 상세 정보의 변경 파일 확장자를 보고 계산합니다. 확인한 언어는 `.state/commit_languages.json`에 캐시해서 5분마다 GitHub API를 과하게 호출하지 않게 합니다.
+
+통계, 랭킹, 밤 요약의 `COMMIT` 숫자는 원본 GitHub 커밋 개수가 아니라 중복 제거된 Programmers 문제 수 기준입니다. 같은 문제를 여러 번 제출해서 BaekjoonHub 커밋이 여러 개 생겨도 문제 제목과 난이도가 같으면 1개로만 계산합니다.
