@@ -23,6 +23,7 @@ STATE_PATH = Path(".state/seen_commits.json")
 SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
 RANKING_STATE_PATH = Path(".state/ranking_message.json")
 LANGUAGE_CACHE_PATH = Path(".state/commit_languages.json")
+PROBLEM_KEY_CACHE_PATH = Path(".state/commit_problem_keys.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
@@ -304,21 +305,33 @@ def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
     return [commit for commit in commits if is_solution_commit(commit)]
 
 
-def problem_key(commit: CommitInfo) -> str:
+def message_problem_key(commit: CommitInfo) -> str:
     title = re.sub(r"\s+", " ", problem_title(commit)).strip().casefold()
     level = problem_level_number(commit)
     return f"{level if level is not None else 'unknown'}:{title}"
 
 
-def unique_solution_commits(commits: list[CommitInfo] | tuple[CommitInfo, ...]) -> list[CommitInfo]:
+def problem_key(commit: CommitInfo) -> str:
+    return message_problem_key(commit)
+
+
+def unique_solution_commits(
+    commits: list[CommitInfo] | tuple[CommitInfo, ...],
+    key_by_sha: dict[str, str] | None = None,
+) -> list[CommitInfo]:
+    key_by_sha = key_by_sha or {}
     unique: dict[str, CommitInfo] = {}
     for commit in sorted(commits, key=lambda item: item.committed_at):
-        unique.setdefault(problem_key(commit), commit)
+        key = key_by_sha.get(commit.sha) or message_problem_key(commit)
+        unique.setdefault(key, commit)
     return list(unique.values())
 
 
-def unique_solution_count(commits: list[CommitInfo] | tuple[CommitInfo, ...]) -> int:
-    return len(unique_solution_commits(commits))
+def unique_solution_count(
+    commits: list[CommitInfo] | tuple[CommitInfo, ...],
+    key_by_sha: dict[str, str] | None = None,
+) -> int:
+    return len(unique_solution_commits(commits, key_by_sha))
 
 
 def problem_title(commit: CommitInfo) -> str:
@@ -365,6 +378,58 @@ def load_language_cache() -> dict[str, str]:
 
 def save_language_cache(cache: dict[str, str]) -> None:
     write_json_file(LANGUAGE_CACHE_PATH, cache)
+
+
+def load_problem_key_cache() -> dict[str, str]:
+    data = load_json_file(PROBLEM_KEY_CACHE_PATH, {})
+    if not isinstance(data, dict):
+        raise ConfigError(f"{PROBLEM_KEY_CACHE_PATH} 파일은 JSON 객체여야 합니다.")
+    return {str(key): str(value) for key, value in data.items() if value}
+
+
+def save_problem_key_cache(cache: dict[str, str]) -> None:
+    write_json_file(PROBLEM_KEY_CACHE_PATH, cache)
+
+
+def problem_key_from_filename(filename: str) -> str | None:
+    normalized = filename.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return None
+
+    for part in parts:
+        match = re.match(r"^(\d+)[.\s_\-]", part)
+        if match:
+            return f"path:{match.group(1)}"
+
+    if len(parts) >= 2 and parts[-1].lower() != "readme.md":
+        return "path:" + "/".join(parts[:-1]).casefold()
+    return None
+
+
+def commit_problem_key(
+    session: requests.Session,
+    friend: Friend,
+    commit: CommitInfo,
+    cache: dict[str, str],
+) -> tuple[str, bool]:
+    if not commit.sha:
+        return message_problem_key(commit), False
+
+    cache_key = f"{friend.repo_key}:{commit.sha}"
+    if cache_key in cache:
+        return cache[cache_key], False
+
+    try:
+        filenames = fetch_commit_files(session, friend, commit.sha)
+    except Exception as exc:
+        print(f"{friend.name} 문제 키 확인 실패: {exc}", file=sys.stderr)
+        return message_problem_key(commit), False
+
+    path_keys = [key for filename in filenames if (key := problem_key_from_filename(filename))]
+    key = Counter(path_keys).most_common(1)[0][0] if path_keys else message_problem_key(commit)
+    cache[cache_key] = key
+    return key, True
 
 
 def commit_language(
@@ -560,11 +625,41 @@ def build_stats(
     month_start = today.replace(day=1)
     stats: list[MemberStats] = []
     language_cache = load_language_cache()
+    problem_key_cache = load_problem_key_cache()
     language_cache_changed = False
+    problem_key_cache_changed = False
 
     for friend in friends:
-        all_commits = tuple(solution_commits(fetch_commits(session, friend)))
-        commits = tuple(unique_solution_commits(all_commits))
+        try:
+            all_commits = tuple(solution_commits(fetch_commits(session, friend)))
+        except Exception as exc:
+            print(f"{friend.name} 통계 확인 실패: {exc}", file=sys.stderr)
+            stats.append(
+                MemberStats(
+                    friend=friend,
+                    commits=(),
+                    score=0,
+                    level_counts={level: 0 for level in range(6)},
+                    language_counts={},
+                    primary_language="Unknown",
+                    total_commits=0,
+                    week_commits=0,
+                    month_commits=0,
+                    max_daily_commits=0,
+                    current_streak=0,
+                    longest_streak=0,
+                    last_solved_at=None,
+                )
+            )
+            continue
+
+        key_by_sha: dict[str, str] = {}
+        for commit in all_commits:
+            key, changed = commit_problem_key(session, friend, commit, problem_key_cache)
+            key_by_sha[commit.sha] = key
+            problem_key_cache_changed = problem_key_cache_changed or changed
+
+        commits = tuple(unique_solution_commits(all_commits, key_by_sha))
         level_counts: Counter[int] = Counter()
         language_counts: Counter[str] = Counter()
         daily_counts: Counter[date] = Counter()
@@ -580,7 +675,7 @@ def build_stats(
             language_cache_changed = language_cache_changed or language_changed
             score += commit_points(commit)
 
-        for _, solved_date in {(problem_key(commit), commit.kst_date) for commit in all_commits}:
+        for _, solved_date in {((key_by_sha.get(commit.sha) or message_problem_key(commit)), commit.kst_date) for commit in all_commits}:
             daily_counts[solved_date] += 1
 
         solved_dates = set(daily_counts)
@@ -605,6 +700,8 @@ def build_stats(
 
     if language_cache_changed and persist_language_cache:
         save_language_cache(language_cache)
+    if problem_key_cache_changed and persist_language_cache:
+        save_problem_key_cache(problem_key_cache)
 
     return stats
 
@@ -767,6 +864,8 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
     target_date = datetime.now(KST).date()
     since_utc, until_utc = get_kst_date_range(target_date)
     state, state_exists = load_state()
+    problem_key_cache = load_problem_key_cache()
+    problem_key_cache_changed = False
     changed = False
 
     for friend in friends:
@@ -791,20 +890,26 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
             all_solution_commits = commits
             try:
                 all_solution_commits = solution_commits(fetch_commits(session, friend))
-                total_count = unique_solution_count(all_solution_commits)
+                key_by_sha: dict[str, str] = {}
+                for commit in all_solution_commits:
+                    key, key_changed = commit_problem_key(session, friend, commit, problem_key_cache)
+                    key_by_sha[commit.sha] = key
+                    problem_key_cache_changed = problem_key_cache_changed or key_changed
+                total_count = unique_solution_count(all_solution_commits, key_by_sha)
             except Exception as exc:
                 print(f"{friend.name} 총 누적 확인 실패: {exc}", file=sys.stderr)
+                key_by_sha = {}
                 total_count = len(set(state.get(repo_key, []) + current_shas))
 
             new_shas = {commit.sha for commit in new_commits}
             known_problem_keys = {
-                problem_key(commit)
+                key_by_sha.get(commit.sha) or message_problem_key(commit)
                 for commit in all_solution_commits
                 if commit.sha and commit.sha not in new_shas
             }
             notify_commits: list[CommitInfo] = []
             for commit in new_commits:
-                key = problem_key(commit)
+                key = key_by_sha.get(commit.sha) or message_problem_key(commit)
                 if key in known_problem_keys:
                     print(f"{friend.name} duplicate submission skipped: {problem_title(commit)}")
                     continue
@@ -833,6 +938,9 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
     if not state_exists:
         print("state initialized")
 
+    if problem_key_cache_changed and not dry_run:
+        save_problem_key_cache(problem_key_cache)
+
     if not skip_board:
         update_ranking_board(session, friends, dry_run=dry_run)
 
@@ -854,15 +962,24 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
 
     since_utc, until_utc = get_kst_date_range(target_date)
     results: list[SummaryResult] = []
+    problem_key_cache = load_problem_key_cache()
+    problem_key_cache_changed = False
     for friend in friends:
         try:
             commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
-            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits)))
+            key_by_sha: dict[str, str] = {}
+            for commit in commits:
+                key, changed = commit_problem_key(session, friend, commit, problem_key_cache)
+                key_by_sha[commit.sha] = key
+                problem_key_cache_changed = problem_key_cache_changed or changed
+            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits, key_by_sha)))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             results.append(SummaryResult(friend=friend, error=str(exc)))
 
     send_discord_message(build_summary_message(target_date, results), dry_run=dry_run)
+    if problem_key_cache_changed and not dry_run:
+        save_problem_key_cache(problem_key_cache)
     if once and not dry_run:
         sent_dates = load_summary_state()
         sent_dates.add(target_date_key)

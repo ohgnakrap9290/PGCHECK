@@ -69,12 +69,12 @@ jobs:
       - name: Commit summary state
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- .state/sent_summaries.json .state/commit_languages.json)" ]; then
+          if [ -z "$(git status --porcelain -- .state/sent_summaries.json .state/commit_languages.json .state/commit_problem_keys.json)" ]; then
             echo "No summary state changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .state/sent_summaries.json .state/commit_languages.json
+          git add .state/sent_summaries.json .state/commit_languages.json .state/commit_problem_keys.json
           git commit -m "Update sent summaries state"
           git push

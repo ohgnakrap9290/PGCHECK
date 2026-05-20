@@ -224,4 +224,4 @@ python programmers_check.py stats 박강호 --dry-run
 
 언어 표시는 커밋 상세 정보의 변경 파일 확장자를 보고 계산합니다. 확인한 언어는 `.state/commit_languages.json`에 캐시해서 5분마다 GitHub API를 과하게 호출하지 않게 합니다.
 
-통계, 랭킹, 밤 요약의 `COMMIT` 숫자는 원본 GitHub 커밋 개수가 아니라 중복 제거된 Programmers 문제 수 기준입니다. 같은 문제를 여러 번 제출해서 BaekjoonHub 커밋이 여러 개 생겨도 문제 제목과 난이도가 같으면 1개로만 계산합니다.
+통계, 랭킹, 밤 요약의 `COMMIT` 숫자는 원본 GitHub 커밋 개수가 아니라 중복 제거된 Programmers 문제 수 기준입니다. 같은 문제를 여러 번 제출해서 BaekjoonHub 커밋이 여러 개 생겨도 1개로만 계산합니다. 중복 판단은 가능한 경우 BaekjoonHub가 만든 문제 폴더/파일 경로를 우선 사용하고, 파일 경로 확인이 안 되면 문제 제목과 난이도를 사용합니다. 확인한 문제 키는 `.state/commit_problem_keys.json`에 캐시합니다.

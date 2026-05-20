@@ -62,12 +62,12 @@ jobs:
       - name: Commit ranking board state
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- .state/ranking_message.json .state/commit_languages.json)" ]; then
+          if [ -z "$(git status --porcelain -- .state/ranking_message.json .state/commit_languages.json .state/commit_problem_keys.json)" ]; then
             echo "No ranking board state changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .state/ranking_message.json .state/commit_languages.json
+          git add .state/ranking_message.json .state/commit_languages.json .state/commit_problem_keys.json
           git commit -m "Update ranking board state"
           git push
