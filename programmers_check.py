@@ -633,25 +633,7 @@ def build_stats(
         try:
             all_commits = tuple(solution_commits(fetch_commits(session, friend)))
         except Exception as exc:
-            print(f"{friend.name} 통계 확인 실패: {exc}", file=sys.stderr)
-            stats.append(
-                MemberStats(
-                    friend=friend,
-                    commits=(),
-                    score=0,
-                    level_counts={level: 0 for level in range(6)},
-                    language_counts={},
-                    primary_language="Unknown",
-                    total_commits=0,
-                    week_commits=0,
-                    month_commits=0,
-                    max_daily_commits=0,
-                    current_streak=0,
-                    longest_streak=0,
-                    last_solved_at=None,
-                )
-            )
-            continue
+            raise RuntimeError(f"{friend.name} 통계 확인 실패: {exc}") from exc
 
         key_by_sha: dict[str, str] = {}
         for commit in all_commits:
@@ -942,7 +924,10 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
         save_problem_key_cache(problem_key_cache)
 
     if not skip_board:
-        update_ranking_board(session, friends, dry_run=dry_run)
+        try:
+            update_ranking_board(session, friends, dry_run=dry_run)
+        except Exception as exc:
+            print(f"ranking board update failed: {exc}", file=sys.stderr)
 
     return 0
 
