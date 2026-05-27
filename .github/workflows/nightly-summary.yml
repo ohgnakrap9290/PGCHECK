@@ -15,6 +15,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: programmers-state-updates
+  cancel-in-progress: false
+
 jobs:
   summary:
     runs-on: ubuntu-latest

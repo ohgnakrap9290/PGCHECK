@@ -99,7 +99,7 @@ Lv.5 = 89점
 /stats name:박강호
 ```
 
-`/help`는 사용 가능한 명령어 목록을 보여줍니다. `/poll`은 지금 기준 새 커밋을 확인합니다. `/summary`는 밤 12시에 오는 메시지와 같은 형식으로 요약을 보여줍니다. `/weekly`는 금주의 COMMIT 랭킹, `/ranking`은 난이도 점수 기반 종합 랭킹, `/stats`는 개인 스탯입니다.
+`/help`는 사용 가능한 명령어 목록을 보여줍니다. `/poll`은 상태 파일을 변경하지 않고 오늘의 고유 풀이 기록을 수동으로 다시 보여줍니다. `/summary`는 밤 12시에 오는 메시지와 같은 형식으로 요약을 보여줍니다. `/weekly`는 금주의 COMMIT 랭킹, `/ranking`은 난이도 점수 기반 종합 랭킹, `/stats`는 개인 스탯입니다.
 
 봇 실행에 필요한 환경변수:
 
@@ -163,6 +163,8 @@ Discord Webhook URL은 Discord 채널 설정의 `Integrations` 메뉴에서 Webh
 ```text
 Actions -> Programmers Commit Poll -> Run workflow
 ```
+
+이 workflow를 수동으로 실행하면 이미 자동 알림이 처리한 뒤라도 오늘의 고유 풀이 기록을 Discord에 다시 보냅니다. 수동 확인은 `.state/seen_commits.json`의 알림 상태를 소비하지 않습니다.
 
 밤 12시 요약 workflow:
 

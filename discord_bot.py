@@ -16,16 +16,19 @@ from programmers_check import (
     build_stats,
     build_summary_message,
     build_weekly_ranking_message,
+    commit_problem_key,
     fetch_commits,
     format_commit_notification,
     get_kst_date_range,
     github_session,
     load_friends,
-    load_state,
+    load_problem_key_cache,
+    message_problem_key,
     parse_kst_date,
-    save_state,
     solution_commits,
     truncate_discord_content,
+    unique_solution_commits,
+    unique_solution_count,
 )
 
 
@@ -59,42 +62,35 @@ def manual_poll_messages() -> list[str]:
     session = github_session()
     target_date = datetime.now(KST).date()
     since_utc, until_utc = get_kst_date_range(target_date)
-    state, state_exists = load_state()
+    problem_key_cache = load_problem_key_cache()
     messages: list[str] = []
-    changed = False
 
     for friend in friends:
         try:
-            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+            today_commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+            all_commits = solution_commits(fetch_commits(session, friend))
+            key_by_sha: dict[str, str] = {}
+            for commit in all_commits:
+                key, _ = commit_problem_key(session, friend, commit, problem_key_cache)
+                key_by_sha[commit.sha] = key
+            total_count = unique_solution_count(all_commits, key_by_sha)
+            today_keys = {commit.sha: key_by_sha.get(commit.sha, message_problem_key(commit)) for commit in today_commits}
+            today_shas = {commit.sha for commit in today_commits}
+            previously_solved_keys = {
+                key_by_sha.get(commit.sha, message_problem_key(commit))
+                for commit in all_commits
+                if commit.sha not in today_shas
+            }
         except Exception as exc:
             messages.append(f"⚠️ {friend.name} 확인 실패: {exc}")
             continue
 
-        repo_key = friend.repo_key
-        current_shas = [commit.sha for commit in commits if commit.sha]
-        seen = set(state.get(repo_key, []))
+        for commit in unique_solution_commits(today_commits, today_keys):
+            if today_keys[commit.sha] in previously_solved_keys:
+                continue
+            messages.append(format_commit_notification(friend, commit, total_count))
 
-        if not state_exists or repo_key not in state:
-            state[repo_key] = current_shas
-            changed = True
-            messages.append(f"{friend.name}: 상태 초기화 완료")
-            continue
-
-        new_commits = [commit for commit in reversed(commits) if commit.sha and commit.sha not in seen]
-        if not new_commits:
-            continue
-
-        total_count = len(solution_commits(fetch_commits(session, friend)))
-        for index, commit in enumerate(new_commits, start=1):
-            messages.append(format_commit_notification(friend, commit, total_count - len(new_commits) + index))
-
-        state[repo_key] = list(dict.fromkeys(current_shas + state.get(repo_key, [])))[:500]
-        changed = True
-
-    if changed:
-        save_state(state)
-
-    return messages or ["새 커밋이 없습니다."]
+    return messages or ["오늘 풀이 기록이 없습니다."]
 
 
 def manual_summary_message(date_text: str | None) -> str:
@@ -107,12 +103,11 @@ def manual_summary_message(date_text: str | None) -> str:
     for friend in friends:
         try:
             commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
-            results.append(SummaryResult(friend=friend, count=len(commits)))
+            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits)))
         except Exception as exc:
             results.append(SummaryResult(friend=friend, error=str(exc)))
 
-    stats = build_stats(session, friends, today=target_date)
-    return build_summary_message(target_date, results, stats)
+    return build_summary_message(target_date, results)
 
 
 def weekly_message() -> str:

@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: programmers-commit-poll
+  group: programmers-state-updates
   cancel-in-progress: false
 
 jobs:
@@ -48,7 +48,12 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_RANKING_WEBHOOK_URL: ${{ secrets.DISCORD_RANKING_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-        run: python programmers_check.py poll
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            python programmers_check.py poll --report-today
+          else
+            python programmers_check.py poll
+          fi
 
       - name: Send nightly summary backup
         env:

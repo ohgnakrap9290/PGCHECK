@@ -109,6 +109,11 @@ def parse_args() -> argparse.Namespace:
     poll_parser = subparsers.add_parser("poll", help="새 풀이 커밋을 확인하고 즉시 알림을 보냅니다.")
     poll_parser.add_argument("--dry-run", action="store_true", help="Discord 전송과 상태 저장 없이 결과만 출력합니다.")
     poll_parser.add_argument("--skip-board", action="store_true", help="상시 랭킹판 업데이트를 건너뜁니다.")
+    poll_parser.add_argument(
+        "--report-today",
+        action="store_true",
+        help="상태와 무관하게 오늘의 고유 풀이 기록을 수동 확인용으로 다시 보냅니다.",
+    )
 
     summary_parser = subparsers.add_parser("summary", help="KST 날짜별 풀이 기록 요약을 보냅니다.")
     summary_parser.add_argument("--date", type=parse_kst_date, help="요약할 KST 날짜입니다. 형식: YYYY-MM-DD")
@@ -840,7 +845,7 @@ def update_ranking_board(session: requests.Session, friends: list[Friend], dry_r
     print(f"ranking board created: {new_message_id}")
 
 
-def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
+def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool = False) -> int:
     friends = load_friends()
     session = github_session()
     target_date = datetime.now(KST).date()
@@ -849,12 +854,38 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
     problem_key_cache = load_problem_key_cache()
     problem_key_cache_changed = False
     changed = False
+    manual_report_count = 0
 
     for friend in friends:
         try:
             commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
+            continue
+
+        if report_today:
+            try:
+                all_solution_commits = solution_commits(fetch_commits(session, friend))
+                all_key_by_sha: dict[str, str] = {}
+                for commit in all_solution_commits:
+                    key, key_changed = commit_problem_key(session, friend, commit, problem_key_cache)
+                    all_key_by_sha[commit.sha] = key
+                    problem_key_cache_changed = problem_key_cache_changed or key_changed
+                total_count = unique_solution_count(all_solution_commits, all_key_by_sha)
+                today_key_by_sha = {commit.sha: all_key_by_sha.get(commit.sha, message_problem_key(commit)) for commit in commits}
+                today_shas = {commit.sha for commit in commits}
+                previously_solved_keys = {
+                    all_key_by_sha.get(commit.sha, message_problem_key(commit))
+                    for commit in all_solution_commits
+                    if commit.sha not in today_shas
+                }
+                for commit in unique_solution_commits(commits, today_key_by_sha):
+                    if today_key_by_sha[commit.sha] in previously_solved_keys:
+                        continue
+                    send_discord_message(format_commit_notification(friend, commit, total_count), dry_run=dry_run)
+                    manual_report_count += 1
+            except Exception as exc:
+                print(f"{friend.name} 수동 확인 실패: {exc}", file=sys.stderr)
             continue
 
         repo_key = friend.repo_key
@@ -908,7 +939,10 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
             state[repo_key] = merged[:500]
             changed = True
 
-    if changed:
+    if report_today:
+        if manual_report_count == 0:
+            print("today has no solved problems to report")
+    elif changed:
         if dry_run:
             print("dry-run: state file was not saved")
         else:
@@ -917,7 +951,7 @@ def run_poll(dry_run: bool = False, skip_board: bool = False) -> int:
     else:
         print("no new commits")
 
-    if not state_exists:
+    if not report_today and not state_exists:
         print("state initialized")
 
     if problem_key_cache_changed and not dry_run:
@@ -1005,7 +1039,7 @@ def main() -> int:
 
     try:
         if args.command == "poll":
-            return run_poll(dry_run=args.dry_run, skip_board=args.skip_board)
+            return run_poll(dry_run=args.dry_run, skip_board=args.skip_board, report_today=args.report_today)
         if args.command == "summary":
             return run_summary(target_date=args.date, dry_run=args.dry_run, once=args.once)
         if args.command == "weekly":
