@@ -59,7 +59,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PREFACE_MESSAGE: ${{ inputs.preface }}
         run: |
-          python -c "import json, os, urllib.request; payload=json.dumps({'content': os.environ['PREFACE_MESSAGE']}).encode('utf-8'); req=urllib.request.Request(os.environ['DISCORD_WEBHOOK_URL'], data=payload, headers={'Content-Type':'application/json'}, method='POST'); urllib.request.urlopen(req, timeout=20).close()"
+          python -c "import os, requests; response = requests.post(os.environ['DISCORD_WEBHOOK_URL'], json={'content': os.environ['PREFACE_MESSAGE']}, timeout=20); response.raise_for_status()"
 
       - name: Send nightly summary
         env:
