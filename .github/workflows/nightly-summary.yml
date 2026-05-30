@@ -11,6 +11,10 @@ on:
         description: "KST date to summarize. Empty means today for manual runs and yesterday for scheduled runs. Example: 2026-05-18"
         required: false
         type: string
+      preface:
+        description: "Optional Discord message to send before the summary."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -48,6 +52,14 @@ jobs:
             echo "::error::DISCORD_WEBHOOK_URL secret is not set"
             exit 1
           fi
+
+      - name: Send preface message
+        if: ${{ inputs.preface != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PREFACE_MESSAGE: ${{ inputs.preface }}
+        run: |
+          python -c "import json, os, urllib.request; payload=json.dumps({'content': os.environ['PREFACE_MESSAGE']}).encode('utf-8'); req=urllib.request.Request(os.environ['DISCORD_WEBHOOK_URL'], data=payload, headers={'Content-Type':'application/json'}, method='POST'); urllib.request.urlopen(req, timeout=20).close()"
 
       - name: Send nightly summary
         env:
