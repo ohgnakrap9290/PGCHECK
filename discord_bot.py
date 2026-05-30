@@ -18,6 +18,7 @@ from programmers_check import (
     build_weekly_ranking_message,
     commit_problem_key,
     fetch_commits,
+    fetch_solution_commits,
     format_commit_notification,
     get_kst_date_range,
     github_session,
@@ -68,7 +69,7 @@ def manual_poll_messages() -> list[str]:
     for friend in friends:
         try:
             today_commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
-            all_commits = solution_commits(fetch_commits(session, friend))
+            all_commits = fetch_solution_commits(session, friend)
             key_by_sha: dict[str, str] = {}
             for commit in all_commits:
                 key, _ = commit_problem_key(session, friend, commit, problem_key_cache)
@@ -102,8 +103,13 @@ def manual_summary_message(date_text: str | None) -> str:
     results: list[SummaryResult] = []
     for friend in friends:
         try:
-            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
-            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits)))
+            commits = fetch_solution_commits(session, friend, since_utc, until_utc)
+            key_by_sha: dict[str, str] = {}
+            problem_key_cache = load_problem_key_cache()
+            for commit in commits:
+                key, _ = commit_problem_key(session, friend, commit, problem_key_cache)
+                key_by_sha[commit.sha] = key
+            results.append(SummaryResult(friend=friend, count=unique_solution_count(commits, key_by_sha)))
         except Exception as exc:
             results.append(SummaryResult(friend=friend, error=str(exc)))
 

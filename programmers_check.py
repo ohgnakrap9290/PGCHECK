@@ -24,7 +24,9 @@ SUMMARY_STATE_PATH = Path(".state/sent_summaries.json")
 RANKING_STATE_PATH = Path(".state/ranking_message.json")
 LANGUAGE_CACHE_PATH = Path(".state/commit_languages.json")
 PROBLEM_KEY_CACHE_PATH = Path(".state/commit_problem_keys.json")
+MANUAL_COMMITS_PATH = Path(".state/manual_commits.json")
 SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
+MANUAL_COMMIT_PREFIX = "manual:"
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
@@ -310,6 +312,91 @@ def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
     return [commit for commit in commits if is_solution_commit(commit)]
 
 
+def parse_manual_commit_date(value: Any) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def manual_commit_matches(friend: Friend, item: dict[str, Any]) -> bool:
+    repo_key = item.get("repo_key")
+    owner = item.get("owner")
+    repo = item.get("repo")
+    name = item.get("name")
+    return (
+        name == friend.name
+        or repo_key == friend.repo_key
+        or (owner == friend.owner and repo == friend.repo)
+    )
+
+
+def load_manual_commits(friend: Friend, target_date: date | None = None) -> list[CommitInfo]:
+    data = load_json_file(MANUAL_COMMITS_PATH, [])
+    if not isinstance(data, list):
+        raise ConfigError(f"{MANUAL_COMMITS_PATH} 파일은 JSON 배열이어야 합니다.")
+
+    commits: list[CommitInfo] = []
+    for item in data:
+        if not isinstance(item, dict) or not manual_commit_matches(friend, item):
+            continue
+
+        commit_date = parse_manual_commit_date(item.get("date"))
+        if commit_date is None or (target_date is not None and commit_date != target_date):
+            continue
+
+        count_value = item.get("count", 1)
+        try:
+            count = int(count_value)
+        except (TypeError, ValueError):
+            count = 1
+        count = max(count, 0)
+
+        for index in range(1, count + 1):
+            sha = f"{MANUAL_COMMIT_PREFIX}{friend.repo_key}:{commit_date.isoformat()}:{index}"
+            commits.append(
+                CommitInfo(
+                    sha=sha,
+                    message=(
+                        f"[level 0] Title: {commit_date.isoformat()}-{index}, "
+                        "Time: 0 ms, Memory: 0 KB -BaekjoonHub"
+                    ),
+                    url="",
+                    committed_at=datetime.combine(commit_date, time(hour=23, minute=59), tzinfo=KST)
+                    + timedelta(seconds=index),
+                )
+            )
+    return commits
+
+
+def date_from_kst_range(since_utc: str | None, until_utc: str | None) -> date | None:
+    if not since_utc or not until_utc:
+        return None
+    try:
+        start = parse_github_datetime(since_utc).astimezone(KST)
+        end = parse_github_datetime(until_utc).astimezone(KST)
+    except ValueError:
+        return None
+    if start.time() == time.min and end.date() == start.date() and end.time() == time(hour=23, minute=59, second=59):
+        return start.date()
+    return None
+
+
+def fetch_solution_commits(
+    session: requests.Session,
+    friend: Friend,
+    since_utc: str | None = None,
+    until_utc: str | None = None,
+    include_manual: bool = True,
+) -> list[CommitInfo]:
+    commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+    if include_manual:
+        commits.extend(load_manual_commits(friend, date_from_kst_range(since_utc, until_utc)))
+    return commits
+
+
 def message_problem_key(commit: CommitInfo) -> str:
     title = re.sub(r"\s+", " ", problem_title(commit)).strip().casefold()
     level = problem_level_number(commit)
@@ -418,6 +505,8 @@ def commit_problem_key(
     commit: CommitInfo,
     cache: dict[str, str],
 ) -> tuple[str, bool]:
+    if commit.sha.startswith(MANUAL_COMMIT_PREFIX):
+        return message_problem_key(commit), False
     if not commit.sha:
         return message_problem_key(commit), False
 
@@ -443,6 +532,8 @@ def commit_language(
     commit: CommitInfo,
     cache: dict[str, str],
 ) -> tuple[str | None, bool]:
+    if commit.sha.startswith(MANUAL_COMMIT_PREFIX):
+        return None, False
     if not commit.sha:
         return None, False
 
@@ -636,7 +727,7 @@ def build_stats(
 
     for friend in friends:
         try:
-            all_commits = tuple(solution_commits(fetch_commits(session, friend)))
+            all_commits = tuple(fetch_solution_commits(session, friend))
         except Exception as exc:
             raise RuntimeError(f"{friend.name} 통계 확인 실패: {exc}") from exc
 
@@ -865,7 +956,7 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
 
         if report_today:
             try:
-                all_solution_commits = solution_commits(fetch_commits(session, friend))
+                all_solution_commits = fetch_solution_commits(session, friend)
                 all_key_by_sha: dict[str, str] = {}
                 for commit in all_solution_commits:
                     key, key_changed = commit_problem_key(session, friend, commit, problem_key_cache)
@@ -902,7 +993,7 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
         if new_commits:
             all_solution_commits = commits
             try:
-                all_solution_commits = solution_commits(fetch_commits(session, friend))
+                all_solution_commits = fetch_solution_commits(session, friend)
                 key_by_sha: dict[str, str] = {}
                 for commit in all_solution_commits:
                     key, key_changed = commit_problem_key(session, friend, commit, problem_key_cache)
@@ -985,7 +1076,7 @@ def run_summary(target_date: date | None = None, dry_run: bool = False, once: bo
     problem_key_cache_changed = False
     for friend in friends:
         try:
-            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+            commits = fetch_solution_commits(session, friend, since_utc, until_utc)
             key_by_sha: dict[str, str] = {}
             for commit in commits:
                 key, changed = commit_problem_key(session, friend, commit, problem_key_cache)
