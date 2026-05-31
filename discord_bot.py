@@ -68,17 +68,17 @@ def manual_poll_messages() -> list[str]:
 
     for friend in friends:
         try:
-            today_commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+            today_commits = solution_commits(friend, fetch_commits(session, friend, since_utc, until_utc))
             all_commits = fetch_solution_commits(session, friend)
             key_by_sha: dict[str, str] = {}
             for commit in all_commits:
                 key, _ = commit_problem_key(session, friend, commit, problem_key_cache)
                 key_by_sha[commit.sha] = key
             total_count = unique_solution_count(all_commits, key_by_sha)
-            today_keys = {commit.sha: key_by_sha.get(commit.sha, message_problem_key(commit)) for commit in today_commits}
+            today_keys = {commit.sha: key_by_sha.get(commit.sha, message_problem_key(commit, friend)) for commit in today_commits}
             today_shas = {commit.sha for commit in today_commits}
             previously_solved_keys = {
-                key_by_sha.get(commit.sha, message_problem_key(commit))
+                key_by_sha.get(commit.sha, message_problem_key(commit, friend))
                 for commit in all_commits
                 if commit.sha not in today_shas
             }

@@ -25,8 +25,17 @@ RANKING_STATE_PATH = Path(".state/ranking_message.json")
 LANGUAGE_CACHE_PATH = Path(".state/commit_languages.json")
 PROBLEM_KEY_CACHE_PATH = Path(".state/commit_problem_keys.json")
 MANUAL_COMMITS_PATH = Path(".state/manual_commits.json")
-SOLUTION_COMMIT_MARKERS = ("-BaekjoonHub", "BaekjoonHub")
 MANUAL_COMMIT_PREFIX = "manual:"
+PLATFORM_CONFIGS = {
+    "programmers": {
+        "label": "프로그래머스",
+        "markers": ("-BaekjoonHub", "BaekjoonHub"),
+    },
+    "codetree": {
+        "label": "코드트리",
+        "markers": ("CodeTree", "Codetree", "codetree", "코드트리"),
+    },
+}
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
@@ -62,10 +71,23 @@ class Friend:
     owner: str
     repo: str
     branch: str | None = None
+    platform: str = "programmers"
+    markers: tuple[str, ...] | None = None
+    include_all_commits: bool = False
 
     @property
     def repo_key(self) -> str:
         return f"{self.owner}/{self.repo}"
+
+    @property
+    def platform_label(self) -> str:
+        return PLATFORM_CONFIGS.get(self.platform, {}).get("label", self.platform)
+
+    @property
+    def solution_markers(self) -> tuple[str, ...]:
+        if self.markers is not None:
+            return self.markers
+        return PLATFORM_CONFIGS.get(self.platform, PLATFORM_CONFIGS["programmers"])["markers"]
 
 
 @dataclass(frozen=True)
@@ -171,7 +193,25 @@ def load_friends() -> list[Friend]:
         if branch is not None and not isinstance(branch, str):
             raise ConfigError(f"FRIENDS_JSON의 {index}번째 branch 값은 문자열이어야 합니다.")
 
-        friends.append(Friend(name=str(item["name"]), owner=str(item["owner"]), repo=str(item["repo"]), branch=branch))
+        platform = str(item.get("platform") or "programmers").casefold()
+        markers_value = item.get("markers")
+        markers: tuple[str, ...] | None = None
+        if markers_value is not None:
+            if not isinstance(markers_value, list) or not all(isinstance(marker, str) for marker in markers_value):
+                raise ConfigError(f"FRIENDS_JSON의 {index}번째 markers 값은 문자열 배열이어야 합니다.")
+            markers = tuple(marker for marker in markers_value if marker)
+
+        friends.append(
+            Friend(
+                name=str(item["name"]),
+                owner=str(item["owner"]),
+                repo=str(item["repo"]),
+                branch=branch,
+                platform=platform,
+                markers=markers,
+                include_all_commits=bool(item.get("include_all_commits", False)),
+            )
+        )
 
     if not friends:
         raise ConfigError("FRIENDS_JSON에 멤버 정보가 없습니다.")
@@ -304,12 +344,14 @@ def format_github_error(response: requests.Response, friend: Friend) -> str:
     return f"{friend.repo_key} GitHub API 요청 실패: HTTP {response.status_code} ({message})"
 
 
-def is_solution_commit(commit: CommitInfo) -> bool:
-    return any(marker in commit.message for marker in SOLUTION_COMMIT_MARKERS)
+def is_solution_commit(friend: Friend, commit: CommitInfo) -> bool:
+    if friend.include_all_commits:
+        return True
+    return any(marker in commit.message for marker in friend.solution_markers)
 
 
-def solution_commits(commits: list[CommitInfo]) -> list[CommitInfo]:
-    return [commit for commit in commits if is_solution_commit(commit)]
+def solution_commits(friend: Friend, commits: list[CommitInfo]) -> list[CommitInfo]:
+    return [commit for commit in commits if is_solution_commit(friend, commit)]
 
 
 def parse_manual_commit_date(value: Any) -> date | None:
@@ -353,6 +395,7 @@ def load_manual_commits(friend: Friend, target_date: date | None = None) -> list
         except (TypeError, ValueError):
             count = 1
         count = max(count, 0)
+        marker = friend.solution_markers[0] if friend.solution_markers else friend.platform_label
 
         for index in range(1, count + 1):
             sha = f"{MANUAL_COMMIT_PREFIX}{friend.repo_key}:{commit_date.isoformat()}:{index}"
@@ -361,7 +404,7 @@ def load_manual_commits(friend: Friend, target_date: date | None = None) -> list
                     sha=sha,
                     message=(
                         f"[level 0] Title: {commit_date.isoformat()}-{index}, "
-                        "Time: 0 ms, Memory: 0 KB -BaekjoonHub"
+                        f"Time: 0 ms, Memory: 0 KB {marker}"
                     ),
                     url="",
                     committed_at=datetime.combine(commit_date, time(hour=23, minute=59), tzinfo=KST)
@@ -391,14 +434,14 @@ def fetch_solution_commits(
     until_utc: str | None = None,
     include_manual: bool = True,
 ) -> list[CommitInfo]:
-    commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+    commits = solution_commits(friend, fetch_commits(session, friend, since_utc, until_utc))
     if include_manual:
         commits.extend(load_manual_commits(friend, date_from_kst_range(since_utc, until_utc)))
     return commits
 
 
-def message_problem_key(commit: CommitInfo) -> str:
-    title = re.sub(r"\s+", " ", problem_title(commit)).strip().casefold()
+def message_problem_key(commit: CommitInfo, friend: Friend | None = None) -> str:
+    title = re.sub(r"\s+", " ", problem_title(commit, friend)).strip().casefold()
     level = problem_level_number(commit)
     return f"{level if level is not None else 'unknown'}:{title}"
 
@@ -426,8 +469,12 @@ def unique_solution_count(
     return len(unique_solution_commits(commits, key_by_sha))
 
 
-def problem_title(commit: CommitInfo) -> str:
-    message = commit.message.replace("-BaekjoonHub", "").replace("BaekjoonHub", "").strip()
+def problem_title(commit: CommitInfo, friend: Friend | None = None) -> str:
+    message = commit.message
+    markers = friend.solution_markers if friend else tuple(marker for config in PLATFORM_CONFIGS.values() for marker in config["markers"])
+    for marker in markers:
+        message = message.replace(marker, "")
+    message = message.strip()
     match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
     if match:
         return match.group(1).strip()
@@ -506,9 +553,9 @@ def commit_problem_key(
     cache: dict[str, str],
 ) -> tuple[str, bool]:
     if commit.sha.startswith(MANUAL_COMMIT_PREFIX):
-        return message_problem_key(commit), False
+        return message_problem_key(commit, friend), False
     if not commit.sha:
-        return message_problem_key(commit), False
+        return message_problem_key(commit, friend), False
 
     cache_key = f"{friend.repo_key}:{commit.sha}"
     if cache_key in cache:
@@ -518,10 +565,10 @@ def commit_problem_key(
         filenames = fetch_commit_files(session, friend, commit.sha)
     except Exception as exc:
         print(f"{friend.name} 문제 키 확인 실패: {exc}", file=sys.stderr)
-        return message_problem_key(commit), False
+        return message_problem_key(commit, friend), False
 
     path_keys = [key for filename in filenames if (key := problem_key_from_filename(filename))]
-    key = Counter(path_keys).most_common(1)[0][0] if path_keys else message_problem_key(commit)
+    key = Counter(path_keys).most_common(1)[0][0] if path_keys else message_problem_key(commit, friend)
     cache[cache_key] = key
     return key, True
 
@@ -703,7 +750,7 @@ def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: 
             f"**✅ {friend.name} 1 COMMIT!**",
             "------------------------",
             f"난이도: {problem_level(commit)}",
-            f"문제: {problem_title(commit)}",
+            f"문제: {problem_title(commit, friend)}",
             f"총 누적: {total_count} COMMIT",
             "------------------------",
         ]
@@ -753,7 +800,7 @@ def build_stats(
             language_cache_changed = language_cache_changed or language_changed
             score += commit_points(commit)
 
-        for _, solved_date in {((key_by_sha.get(commit.sha) or message_problem_key(commit)), commit.kst_date) for commit in all_commits}:
+        for _, solved_date in {((key_by_sha.get(commit.sha) or message_problem_key(commit, friend)), commit.kst_date) for commit in all_commits}:
             daily_counts[solved_date] += 1
 
         solved_dates = set(daily_counts)
@@ -843,8 +890,9 @@ def build_overall_ranking_message(stats: list[MemberStats]) -> str:
 def build_ranking_board_message(stats: list[MemberStats]) -> str:
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
     ranked = sorted_ranking(stats)
+    board_label = platform_summary_label([SummaryResult(item.friend) for item in stats])
     lines = [
-        "**프로그래머스 랭킹판**",
+        f"**{board_label} 랭킹판**",
         f"업데이트: {now}",
         "",
         "종합 랭킹",
@@ -894,11 +942,19 @@ def build_member_stats_message(stats: list[MemberStats], name: str) -> str:
     return "\n".join(lines)
 
 
+def platform_summary_label(results: list[SummaryResult]) -> str:
+    labels = {result.friend.platform_label for result in results}
+    if len(labels) == 1:
+        return next(iter(labels))
+    return "알고리즘"
+
+
 def build_summary_message(target_date: date, results: list[SummaryResult], stats: list[MemberStats] | None = None) -> str:
     total = sum(result.count for result in results if result.error is None)
     solved = sum(1 for result in results if result.error is None and result.count > 0)
+    platform_label = platform_summary_label(results)
     lines = [
-        f"**📌 {target_date.isoformat()} 프로그래머스 기록**",
+        f"**📌 {target_date.isoformat()} {platform_label} 기록**",
         f"완료 {solved}/{len(results)}명 · 총 {total}문제",
         "",
     ]
@@ -949,7 +1005,7 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
 
     for friend in friends:
         try:
-            commits = solution_commits(fetch_commits(session, friend, since_utc, until_utc))
+            commits = solution_commits(friend, fetch_commits(session, friend, since_utc, until_utc))
         except Exception as exc:
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             continue
@@ -963,10 +1019,10 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
                     all_key_by_sha[commit.sha] = key
                     problem_key_cache_changed = problem_key_cache_changed or key_changed
                 total_count = unique_solution_count(all_solution_commits, all_key_by_sha)
-                today_key_by_sha = {commit.sha: all_key_by_sha.get(commit.sha, message_problem_key(commit)) for commit in commits}
+                today_key_by_sha = {commit.sha: all_key_by_sha.get(commit.sha, message_problem_key(commit, friend)) for commit in commits}
                 today_shas = {commit.sha for commit in commits}
                 previously_solved_keys = {
-                    all_key_by_sha.get(commit.sha, message_problem_key(commit))
+                    all_key_by_sha.get(commit.sha, message_problem_key(commit, friend))
                     for commit in all_solution_commits
                     if commit.sha not in today_shas
                 }
@@ -1007,15 +1063,15 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
 
             new_shas = {commit.sha for commit in new_commits}
             known_problem_keys = {
-                key_by_sha.get(commit.sha) or message_problem_key(commit)
+                key_by_sha.get(commit.sha) or message_problem_key(commit, friend)
                 for commit in all_solution_commits
                 if commit.sha and commit.sha not in new_shas
             }
             notify_commits: list[CommitInfo] = []
             for commit in new_commits:
-                key = key_by_sha.get(commit.sha) or message_problem_key(commit)
+                key = key_by_sha.get(commit.sha) or message_problem_key(commit, friend)
                 if key in known_problem_keys:
-                    print(f"{friend.name} duplicate submission skipped: {problem_title(commit)}")
+                    print(f"{friend.name} duplicate submission skipped: {problem_title(commit, friend)}")
                     continue
                 notify_commits.append(commit)
                 known_problem_keys.add(key)

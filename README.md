@@ -154,6 +154,41 @@ GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repo
 ]
 ```
 
+코드트리 저장소를 쓰는 멤버는 같은 배열에서 `platform`을 `codetree`로 지정합니다.
+
+```json
+{
+  "name": "친구이름",
+  "owner": "github-id",
+  "repo": "codetree-study",
+  "platform": "codetree"
+}
+```
+
+코드트리 자동 커밋 메시지에 `CodeTree`, `Codetree`, `codetree`, `코드트리` 중 하나가 들어가면 풀이 커밋으로 집계됩니다. 메시지 형식이 다르면 `markers`를 직접 지정할 수 있습니다.
+
+```json
+{
+  "name": "친구이름",
+  "owner": "github-id",
+  "repo": "codetree-study",
+  "platform": "codetree",
+  "markers": ["커밋 메시지에 항상 들어가는 문자열"]
+}
+```
+
+저장소에 풀이 커밋만 올라오는 구조라면 `include_all_commits`로 모든 커밋을 집계할 수 있습니다.
+
+```json
+{
+  "name": "친구이름",
+  "owner": "github-id",
+  "repo": "codetree-study",
+  "platform": "codetree",
+  "include_all_commits": true
+}
+```
+
 Discord Webhook URL은 Discord 채널 설정의 `Integrations` 메뉴에서 Webhook을 생성해서 복사합니다. Webhook URL은 secret에만 넣고 코드에는 넣지 않습니다.
 
 ## GitHub Actions
