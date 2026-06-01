@@ -1020,6 +1020,10 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
             print(f"{friend.name} 확인 실패: {exc}", file=sys.stderr)
             continue
 
+        repo_key = friend.repo_key
+        current_shas = [commit.sha for commit in commits if commit.sha]
+        seen = set(state.get(repo_key, []))
+
         if report_today:
             try:
                 all_solution_commits = fetch_solution_commits(session, friend)
@@ -1036,18 +1040,22 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
                     for commit in all_solution_commits
                     if commit.sha not in today_shas
                 }
+                reported_shas: list[str] = []
                 for commit in unique_solution_commits(commits, today_key_by_sha):
+                    if commit.sha in seen:
+                        continue
                     if today_key_by_sha[commit.sha] in previously_solved_keys:
                         continue
                     send_discord_message(format_commit_notification(friend, commit, total_count), dry_run=dry_run)
+                    if commit.sha:
+                        reported_shas.append(commit.sha)
                     manual_report_count += 1
+                if reported_shas:
+                    state[repo_key] = list(dict.fromkeys(reported_shas + state.get(repo_key, [])))[:500]
+                    changed = True
             except Exception as exc:
                 print(f"{friend.name} 수동 확인 실패: {exc}", file=sys.stderr)
             continue
-
-        repo_key = friend.repo_key
-        current_shas = [commit.sha for commit in commits if commit.sha]
-        seen = set(state.get(repo_key, []))
 
         if not state_exists or repo_key not in state:
             state[repo_key] = current_shas
@@ -1099,6 +1107,12 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
     if report_today:
         if manual_report_count == 0:
             print("today has no solved problems to report")
+        if changed:
+            if dry_run:
+                print("dry-run: state file was not saved")
+            else:
+                save_state(state)
+                print(f"state saved to {STATE_PATH}")
     elif changed:
         if dry_run:
             print("dry-run: state file was not saved")
