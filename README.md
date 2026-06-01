@@ -161,11 +161,12 @@ GitHub 저장소에서 `Settings -> Secrets and variables -> Actions -> New repo
   "name": "친구이름",
   "owner": "github-id",
   "repo": "codetree-study",
-  "platform": "codetree"
+  "platform": "codetree",
+  "language": "C"
 }
 ```
 
-코드트리 자동 커밋 메시지에 `CodeTree`, `Codetree`, `codetree`, `코드트리` 중 하나가 들어가면 풀이 커밋으로 집계됩니다. 메시지 형식이 다르면 `markers`를 직접 지정할 수 있습니다.
+코드트리 자동 커밋 메시지에 `[Passed]`, `CodeTree`, `Codetree`, `codetree`, `코드트리` 중 하나가 들어가면 풀이 커밋으로 집계됩니다. 메시지 형식이 다르면 `markers`를 직접 지정할 수 있습니다.
 
 ```json
 {

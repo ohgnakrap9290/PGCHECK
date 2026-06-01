@@ -33,13 +33,14 @@ PLATFORM_CONFIGS = {
     },
     "codetree": {
         "label": "코드트리",
-        "markers": ("CodeTree", "Codetree", "codetree", "코드트리"),
+        "markers": ("[Passed]", "CodeTree", "Codetree", "codetree", "코드트리"),
+        "default_points": 2,
     },
 }
 
 # Programmers Lv.0~5 체감 난이도 차이를 반영한 점수입니다.
 LEVEL_POINTS = {0: 1, 1: 2, 2: 5, 3: 13, 4: 34, 5: 89}
-RANK_TAGS = {1: "OPUS", 2: "COMPILER", 3: "BUG"}
+RANK_TAGS = {1: "OPUS", 2: "COMPILER", 3: "ROCK", 4: "BUG"}
 LANGUAGE_EXTENSIONS = {
     ".py": "Python",
     ".c": "C",
@@ -74,6 +75,7 @@ class Friend:
     platform: str = "programmers"
     markers: tuple[str, ...] | None = None
     include_all_commits: bool = False
+    language: str | None = None
 
     @property
     def repo_key(self) -> str:
@@ -210,6 +212,7 @@ def load_friends() -> list[Friend]:
                 platform=platform,
                 markers=markers,
                 include_all_commits=bool(item.get("include_all_commits", False)),
+                language=str(item["language"]) if item.get("language") else None,
             )
         )
 
@@ -489,17 +492,24 @@ def problem_level_number(commit: CommitInfo) -> int | None:
     return level if level in LEVEL_POINTS else None
 
 
-def problem_level(commit: CommitInfo) -> str:
+def platform_default_points(friend: Friend) -> int:
+    value = PLATFORM_CONFIGS.get(friend.platform, {}).get("default_points", 1)
+    return int(value) if isinstance(value, int) else 1
+
+
+def problem_level(commit: CommitInfo, friend: Friend | None = None) -> str:
     level = problem_level_number(commit)
     if level is None:
+        if friend and friend.platform != "programmers":
+            return friend.platform_label
         return "Lv. ??????"
     return f"Lv. {str(level) * 6}"
 
 
-def commit_points(commit: CommitInfo) -> int:
+def commit_points(commit: CommitInfo, friend: Friend) -> int:
     level = problem_level_number(commit)
     if level is None:
-        return 1
+        return platform_default_points(friend)
     return LEVEL_POINTS[level]
 
 
@@ -749,7 +759,7 @@ def format_commit_notification(friend: Friend, commit: CommitInfo, total_count: 
         [
             f"**✅ {friend.name} 1 COMMIT!**",
             "------------------------",
-            f"난이도: {problem_level(commit)}",
+            f"난이도: {problem_level(commit, friend)}",
             f"문제: {problem_title(commit, friend)}",
             f"총 누적: {total_count} COMMIT",
             "------------------------",
@@ -798,13 +808,13 @@ def build_stats(
             if language:
                 language_counts[language] += 1
             language_cache_changed = language_cache_changed or language_changed
-            score += commit_points(commit)
+            score += commit_points(commit, friend)
 
         for _, solved_date in {((key_by_sha.get(commit.sha) or message_problem_key(commit, friend)), commit.kst_date) for commit in all_commits}:
             daily_counts[solved_date] += 1
 
         solved_dates = set(daily_counts)
-        primary_language = language_counts.most_common(1)[0][0] if language_counts else "Unknown"
+        primary_language = language_counts.most_common(1)[0][0] if language_counts else (friend.language or "Unknown")
         stats.append(
             MemberStats(
                 friend=friend,
