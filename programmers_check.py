@@ -26,6 +26,7 @@ LANGUAGE_CACHE_PATH = Path(".state/commit_languages.json")
 PROBLEM_KEY_CACHE_PATH = Path(".state/commit_problem_keys.json")
 MANUAL_COMMITS_PATH = Path(".state/manual_commits.json")
 MANUAL_COMMIT_PREFIX = "manual:"
+POLL_LOOKBACK_DAYS = 1
 PLATFORM_CONFIGS = {
     "programmers": {
         "label": "프로그래머스",
@@ -224,6 +225,12 @@ def load_friends() -> list[Friend]:
 def get_kst_date_range(target_date: date) -> tuple[str, str]:
     start_kst = datetime.combine(target_date, time.min, tzinfo=KST)
     end_kst = start_kst + timedelta(days=1) - timedelta(seconds=1)
+    return to_utc_iso(start_kst), to_utc_iso(end_kst)
+
+
+def get_kst_poll_range(target_date: date) -> tuple[str, str]:
+    start_kst = datetime.combine(target_date - timedelta(days=POLL_LOOKBACK_DAYS), time.min, tzinfo=KST)
+    end_kst = datetime.combine(target_date, time.max, tzinfo=KST)
     return to_utc_iso(start_kst), to_utc_iso(end_kst)
 
 
@@ -481,6 +488,8 @@ def problem_title(commit: CommitInfo, friend: Friend | None = None) -> str:
     match = re.search(r"Title:\s*(.*?)(?:,\s*Time:|$)", message)
     if match:
         return match.group(1).strip()
+    if friend and friend.platform == "codetree":
+        message = re.sub(r"\s*\(\d+\s*ms,\s*\d+\s*MB\)\s*$", "", message, flags=re.IGNORECASE).strip()
     return message or "풀이 커밋"
 
 
@@ -1006,7 +1015,7 @@ def run_poll(dry_run: bool = False, skip_board: bool = False, report_today: bool
     friends = load_friends()
     session = github_session()
     target_date = datetime.now(KST).date()
-    since_utc, until_utc = get_kst_date_range(target_date)
+    since_utc, until_utc = get_kst_poll_range(target_date)
     state, state_exists = load_state()
     problem_key_cache = load_problem_key_cache()
     problem_key_cache_changed = False
