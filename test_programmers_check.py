@@ -13,6 +13,39 @@ from programmers_check import CommitInfo, Friend
 
 
 class RunPollTests(unittest.TestCase):
+    def test_manual_commit_uses_configured_title_and_level(self) -> None:
+        friend = Friend(name="박강호", owner="ohgnakrap9290", repo="programmers-study")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            previous_cwd = Path.cwd()
+            os.chdir(temp_dir)
+            try:
+                manual_path = Path(".state/manual_commits.json")
+                manual_path.parent.mkdir()
+                manual_path.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "name": "박강호",
+                                "date": "2026-06-16",
+                                "count": 1,
+                                "level": 0,
+                                "title": "공백으로 구분하기 1",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+
+                commits = programmers_check.load_manual_commits(friend)
+
+                self.assertEqual(len(commits), 1)
+                self.assertEqual(programmers_check.problem_title(commits[0], friend), "공백으로 구분하기 1")
+                self.assertEqual(programmers_check.problem_level(commits[0], friend), "Lv. 000000")
+            finally:
+                os.chdir(previous_cwd)
+
     def test_manual_report_resends_seen_commit_without_changing_state(self) -> None:
         friend = Friend(name="테스터", owner="owner", repo="repo")
         commit = CommitInfo(

@@ -406,14 +406,21 @@ def load_manual_commits(friend: Friend, target_date: date | None = None) -> list
             count = 1
         count = max(count, 0)
         marker = friend.solution_markers[0] if friend.solution_markers else friend.platform_label
+        title_value = item.get("title")
+        level_value = item.get("level", 0)
+        try:
+            level = int(level_value)
+        except (TypeError, ValueError):
+            level = 0
 
         for index in range(1, count + 1):
+            title = str(title_value or f"{commit_date.isoformat()}-{index}")
             sha = f"{MANUAL_COMMIT_PREFIX}{friend.repo_key}:{commit_date.isoformat()}:{index}"
             commits.append(
                 CommitInfo(
                     sha=sha,
                     message=(
-                        f"[level 0] Title: {commit_date.isoformat()}-{index}, "
+                        f"[level {level}] Title: {title}, "
                         f"Time: 0 ms, Memory: 0 KB {marker}"
                     ),
                     url="",
